@@ -1,0 +1,19 @@
+{
+  "name": "@nopear/core",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./crypto": "./src/crypto.ts" },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@nopear/protocol": "*",
+    "@noble/curves": "^2.0.0",
+    "@noble/hashes": "^2.0.0",
+    "@noble/ciphers": "^2.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": { "vitest": "3.2.7" }
+}

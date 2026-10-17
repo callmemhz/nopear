@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "NoPear",
+    "slug": "nopear",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "nopear",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.nopear.app"
+    },
+    "android": {
+      "package": "dev.nopear.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "用于扫描 worker 终端打印的认领二维码"
+        }
+      ],
+      "expo-notifications",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "用于选择要发送给会话的图片附件"
+        }
+      ],
+      "expo-web-browser",
+      "expo-sharing",
+      "expo-video"
+    ],
+    "extra": {
+      "saasUrl": "http://localhost:8790"
+    }
+  }
+}

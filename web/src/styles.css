@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Theme tokens — warm, light-first palette. Runtime CSS variables so `.dark` (toggled on <html>
+ * by main.tsx, following the OS) swaps the whole palette; exposed to Tailwind as `bg-app`, `text-ink`, `border-line` …
+ */
+:root {
+  --app: #faf9f5;          /* main background */
+  --side: #f5f4ee;         /* sidebar / secondary surfaces */
+  --ink: #1f1e1d;          /* primary text */
+  --subtle: #6b6a65;       /* muted text */
+  --faint: #9c9a92;        /* placeholder / tertiary text */
+  --line: #e7e5dc;         /* subtle borders */
+  --line-strong: #d6d3c8;
+  --hover: #efede6;        /* row / ghost-button hover */
+  --active: #e8e6dd;       /* selected row */
+  --elev: #ffffff;         /* cards, composer, popovers */
+  --bubble: #f0eee6;       /* user message bubble */
+  --code: #f0eee6;         /* inline code / pre */
+  --accent: #c6613f;       /* clay */
+}
+.dark {
+  --app: #262624;
+  --side: #1f1e1d;
+  --ink: #f3f1ea;
+  --subtle: #a8a59b;
+  --faint: #78766f;
+  --line: #3a3936;
+  --line-strong: #4b4a45;
+  --hover: #31302d;
+  --active: #393834;
+  --elev: #30302e;
+  --bubble: #1a1a18;
+  --code: #1d1d1b;
+  --accent: #d97757;
+}
+
+@theme inline {
+  --color-app: var(--app);
+  --color-side: var(--side);
+  --color-ink: var(--ink);
+  --color-subtle: var(--subtle);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-elev: var(--elev);
+  --color-bubble: var(--bubble);
+  --color-code: var(--code);
+  --color-accent: var(--accent);
+  --color-accent-soft: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Warm neutral scale: pages that use zinc-* directly inherit the warm palette. */
+  --color-zinc-50: #f7f6f1;
+  --color-zinc-100: #efede6;
+  --color-zinc-200: #e4e1d8;
+  --color-zinc-300: #d0ccc1;
+  --color-zinc-400: #a19e94;
+  --color-zinc-500: #75736b;
+  --color-zinc-600: #5c5a54;
+  --color-zinc-700: #45443f;
+  --color-zinc-800: #34332f;
+  --color-zinc-900: #262624;
+  --color-zinc-950: #1d1d1b;
+}
+
+:root { color-scheme: light; }
+:root.dark { color-scheme: dark; }
+html, body, #root { height: 100%; }
+body { @apply bg-app text-ink antialiased; font-family: var(--font-sans); font-size: 14px; }
+
+/* Keyboard focus ring for interactive elements (mouse clicks don't show it). */
+:where(button, a, select, summary, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+/* Quiet scrollbars. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+@utility surface { @apply bg-side; }
+@utility panel { @apply border-line; }
+@utility muted { @apply text-subtle; }
+@utility btn { @apply inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none; }
+@utility btn-primary { @apply btn bg-ink text-app hover:opacity-85; }
+@utility btn-ghost { @apply btn text-subtle hover:bg-hover hover:text-ink; }
+@utility btn-danger { @apply btn text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40; }
+@utility btn-icon { @apply inline-grid h-8 w-8 shrink-0 place-items-center rounded-lg text-subtle transition-colors hover:bg-hover hover:text-ink disabled:opacity-50 disabled:pointer-events-none; }
+@utility input { @apply w-full rounded-lg border border-line bg-elev px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-faint focus:border-line-strong focus:ring-2 focus:ring-accent-soft; }
+@utility chip { @apply inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium bg-active text-subtle; }
+@utility card { @apply rounded-xl border border-line bg-elev; }
+
+@utility prose-chat { @apply text-[15px] leading-7; }
+.prose-chat p { @apply my-2.5; }
+.prose-chat a { @apply text-accent underline underline-offset-2; }
+.prose-chat ul { @apply my-2.5 list-disc pl-5; }
+.prose-chat ol { @apply my-2.5 list-decimal pl-5; }
+.prose-chat li { @apply my-1; }
+.prose-chat h1, .prose-chat h2, .prose-chat h3 { @apply mt-5 mb-2 font-semibold; }
+.prose-chat h1 { @apply text-lg; } .prose-chat h2 { @apply text-base; }
+.prose-chat code { @apply rounded-md bg-code px-1 py-0.5 font-mono text-[13px] text-ink; }
+.prose-chat pre { @apply my-3 overflow-x-auto rounded-xl border border-line bg-code p-3.5 text-[13px] leading-6; }
+.prose-chat pre code { @apply bg-transparent p-0; }
+.prose-chat blockquote { @apply my-2.5 border-l-2 border-line-strong pl-3 text-subtle; }
+.prose-chat table { @apply my-3 w-full border-collapse text-sm; }
+.prose-chat th, .prose-chat td { @apply border border-line px-2 py-1 text-left; }
+.prose-chat > :first-child { @apply mt-0; }
+.prose-chat > :last-child { @apply mb-0; }

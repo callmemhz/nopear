@@ -1,0 +1,13 @@
+{
+  "name": "nopear",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "saas", "worker", "web", "mobile"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p scripts",
+    "test": "npm test --workspaces --if-present",
+    "e2e": "tsx scripts/e2e.ts"
+  },
+  "engines": { "node": ">=22.13" },
+  "devDependencies": { "typescript": "5.9.3", "tsx": "^4.20.0", "@types/node": "^24.0.0", "jsdom": "^29.0.0" }
+}
