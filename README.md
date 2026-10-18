@@ -137,7 +137,7 @@ docker run -d -p 8790:8790 -v nopear-data:/data \
 
 镜像里已经包含 web 构建产物和 worker 安装包。前面需要一层终止 TLS 的反向代理，并且要放行 WebSocket（`/worker/connect`）和 SSE（不要缓冲）。数据都在 `/data`，务必挂载持久卷；SQLite 只允许单实例，不要同时跑两个容器。
 
-### 新机器一键安装（Linux / WSL2）
+### 新机器一键安装（macOS / Linux / WSL2）
 
 在 web「机器 → 添加机器」里生成一条命令（安装码一次性，30 分钟内有效）：
 
@@ -145,9 +145,9 @@ docker run -d -p 8790:8790 -v nopear-data:/data \
 curl -fsSL 'https://nopear.example.com/install.sh?code=…' | bash
 ```
 
-脚本会按需安装 Node 和 pi CLI，下载 worker 到 `~/.nopear-worker`，注册成 systemd 用户服务，并自动认领到生成命令的账号。**模型凭据不会自动复制**：装完后在新机器上登录 pi，或者把 `models.json`、`auth.json` 拷到 `~/.pi/agent/`，再重启 worker。
+脚本会按需安装 Node 和 pi CLI，下载 worker 到 `~/.nopear-worker`，注册成后台服务（macOS 用 launchd、登录后自动运行；Linux 用 systemd 用户服务），并自动认领到生成命令的账号。Mac 睡眠时 worker 会离线。**模型凭据不会自动复制**：装完后在新机器上登录 pi，或者把 `models.json`、`auth.json` 拷到 `~/.pi/agent/`，再重启 worker。
 
-macOS 和原生 Windows 没有一键安装，按上面「快速开始」手动启动 worker。
+原生 Windows 没有一键安装（请用 WSL2），或按上面「快速开始」手动启动 worker。
 
 ## 移动端
 

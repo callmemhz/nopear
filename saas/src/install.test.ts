@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -64,10 +64,32 @@ test('renderInstallScript passes bash -n and contains every step', () => {
   }
   assert.ok(!script.includes('NOPEAR_LABEL='), 'no label → no NOPEAR_LABEL');
   assert.ok(!/^\s*npm ci\b/m.test(script), 'never runs npm ci');
+  // macOS /bin/bash 3.2 reads the bytes of a following non-ASCII char into the variable name: always brace those.
+  assert.deepEqual(script.match(/(?<!\\)\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7F])/g), null);
 
   const labeled = renderInstallScript({ saasUrl: 'https://nopear.example.com', code: 'CODE_abc123', piVersion: '0.84.4', label: "bob's box" });
   bashSyntaxOk(labeled);
   assert.ok(labeled.includes('NOPEAR_LABEL='));
+});
+
+test('renderInstallScript: macOS installs a launchd agent whose plist is valid', { skip: process.platform !== 'darwin' && 'needs plutil' }, () => {
+  const script = renderInstallScript({ saasUrl: 'https://nopear.example.com', code: 'CODE_abc123', piVersion: '0.84.4', label: null });
+  for (const s of ['Darwin|Linux', 'dev.nopear.worker', 'launchctl bootstrap', 'xcode-select -p', 'RunAtLoad', 'SuccessfulExit']) {
+    assert.ok(script.includes(s), `script should contain ${s}`);
+  }
+  // Render just the plist heredoc with sample values (same shell expansion as the real install) and lint it.
+  const heredoc = script.slice(script.indexOf('cat > "$PLIST" <<PLIST'), script.indexOf('\nPLIST\n') + '\nPLIST\n'.length)
+    .replace('cat > "$PLIST" <<PLIST', 'cat <<PLIST');
+  const dir = mkdtempSync(join(tmpdir(), 'plist-'));
+  const sh = `LABEL=dev.nopear.worker; DEST="/Users/a b/.nopear-worker"; NPM=/opt/homebrew/bin/npm; NODE_BIN=/opt/homebrew/bin; NPM_GLOBAL_BIN=/opt/homebrew/bin\n${heredoc}`;
+  const plist = execFileSync('bash', ['-c', sh], { encoding: 'utf8' });
+  writeFileSync(join(dir, 'w.plist'), plist);
+  execFileSync('plutil', ['-lint', join(dir, 'w.plist')]);
+  const json = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', join(dir, 'w.plist')], { encoding: 'utf8' }));
+  assert.equal(json.Label, 'dev.nopear.worker');
+  assert.equal(json.WorkingDirectory, '/Users/a b/.nopear-worker');
+  assert.equal(json.ProgramArguments[2], '"/opt/homebrew/bin/npm" start -w @nopear/worker; c=$?; [ $c -eq 78 ] && exit 0; exit $c');
+  assert.deepEqual(json.KeepAlive, { SuccessfulExit: false });
 });
 
 test('invalidInstallScript passes bash -n, contains exit 1 and fails when run', () => {

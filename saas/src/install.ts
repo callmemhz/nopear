@@ -81,10 +81,12 @@ main() {
   INSTALL_CODE=${shq(o.code)}
 ${labelVar}  DEST="$HOME/.nopear-worker"
 
-  # 1) 仅支持 Linux（WSL2 或原生）
-  if [ "$(uname -s)" != "Linux" ]; then
-    die "仅支持 Linux（WSL2 或原生 Linux），当前系统：$(uname -s)"
-  fi
+  # 1) 支持 macOS 与 Linux（WSL2 或原生）
+  OS="$(uname -s)"
+  case "$OS" in
+    Darwin|Linux) ;;
+    *) die "仅支持 macOS 和 Linux（含 WSL2），当前系统：$OS" ;;
+  esac
   IS_WSL=0
   if grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=1; fi
 
@@ -109,10 +111,14 @@ ${labelVar}  DEST="$HOME/.nopear-worker"
   NODE_BIN="$(dirname "$(command -v node)")"
   NPM="$NODE_BIN/npm"
   export PATH="$NODE_BIN:$PATH"
-  say "Node $(node -v)（$NODE_BIN）"
+  say "Node $(node -v)（\${NODE_BIN}）"
 
-  # 3) git
-  if ! command -v git >/dev/null 2>&1; then
+  # 3) git（macOS 自带的 git 只是触发 Xcode 命令行工具安装的占位程序：缺了就提示，不中断）
+  if [ "$OS" = "Darwin" ]; then
+    if ! xcode-select -p >/dev/null 2>&1; then
+      say "未安装 Xcode 命令行工具（git 等）。agent 用到 git 时需要：可稍后执行 xcode-select --install"
+    fi
+  elif ! command -v git >/dev/null 2>&1; then
     say "安装 git"
     sudo apt-get update
     sudo apt-get install -y git
@@ -125,7 +131,8 @@ ${labelVar}  DEST="$HOME/.nopear-worker"
     mkdir -p "$HOME/.npm-global"
     "$NPM" config set prefix "$HOME/.npm-global"
     NPM_PREFIX="$HOME/.npm-global"
-    say "请把 $HOME/.npm-global/bin 加入 PATH（如在 ~/.bashrc 中写入 export PATH=\\"$HOME/.npm-global/bin:\\$PATH\\"）"
+    RC="~/.bashrc"; [ "$OS" = "Darwin" ] && RC="~/.zshrc"
+    say "请把 $HOME/.npm-global/bin 加入 PATH（如在 \${RC} 中写入 export PATH=\\"$HOME/.npm-global/bin:\\$PATH\\"）"
   fi
   NPM_GLOBAL_BIN="$NPM_PREFIX/bin"
   export PATH="$NPM_GLOBAL_BIN:$PATH"
@@ -149,11 +156,47 @@ ${labelVar}  DEST="$HOME/.nopear-worker"
   {
     printf 'NOPEAR_SAAS_URL=%s\\n' "$SAAS_URL"
     printf 'NOPEAR_INSTALL_CODE=%s\\n' "$INSTALL_CODE"
+    # 安装时指定了数据目录就沿用（默认 ~/.nopear）
+    if [ -n "\${NOPEAR_HOME:-}" ]; then printf 'NOPEAR_HOME=%s\\n' "$NOPEAR_HOME"; fi
 ${labelEnv}  } > "$DEST/worker/.env"
   chmod 600 "$DEST/worker/.env"
 
-  # 8) systemd 用户服务；不可用时给出手动启动方式
-  if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  # 8) 后台服务：macOS 用 launchd（登录后常驻），Linux 用 systemd 用户服务；都不可用时给出手动启动方式
+  if [ "$OS" = "Darwin" ]; then
+    LABEL="dev.nopear.worker"
+    PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+    say "注册 launchd 服务 $LABEL"
+    mkdir -p "$HOME/Library/LaunchAgents"
+    # 退出码 78 = 注册被永久拒绝：包装成正常退出，launchd 就不再拉起（KeepAlive 只在非正常退出时重启）
+    cat > "$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>WorkingDirectory</key><string>$DEST</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string><string>-c</string>
+    <string>"$NPM" start -w @nopear/worker; c=\\$?; [ \\$c -eq 78 ] &amp;&amp; exit 0; exit \\$c</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$NODE_BIN:$NPM_GLOBAL_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$DEST/worker.log</string>
+  <key>StandardErrorPath</key><string>$DEST/worker.log</string>
+</dict>
+</plist>
+PLIST
+    # 重复运行安装脚本时先卸载旧服务，再加载新代码
+    launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$PLIST"
+    launchctl kickstart -k "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+    say "worker 已启动并设为登录后自动运行（日志：tail -f \"$DEST/worker.log\"）"
+    say "提示：Mac 睡眠时 worker 会离线。要一直可用，请在「系统设置 → 电池/能耗」里关闭自动睡眠，或保持接通电源。"
+  elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
     say "注册 systemd 用户服务 nopear-worker.service"
     mkdir -p "$HOME/.config/systemd/user"
     # RestartPreventExitStatus=78：worker 注册被永久拒绝时以 78 退出，不再无限重启

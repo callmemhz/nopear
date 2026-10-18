@@ -27,7 +27,7 @@ function AddMachine({ onClose }: { onClose: () => void }) {
       </div>
       {result && (
         <>
-          <p className="muted">在新机器（WSL2 / Linux）的终端执行下面的命令：安装依赖与 worker、注册为 systemd 用户服务，并自动认领到你的账号。</p>
+          <p className="muted">在新机器（macOS / Linux / WSL2）的终端执行下面的命令：安装依赖与 worker、注册为后台服务（macOS 用 launchd，Linux 用 systemd），并自动认领到你的账号。</p>
           <div className="flex items-center gap-2">
             <code className="surface min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded p-2 font-mono">{result.command}</code>
             <button className="btn-ghost shrink-0 text-xs" onClick={() => copy(result.command)}>{copied ? '已复制' : '复制'}</button>
