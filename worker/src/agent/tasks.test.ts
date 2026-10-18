@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEventBus } from '@earendil-works/pi-coding-agent';
 import type { BackgroundTask } from '@nopear/protocol';
-import { TaskTracker } from './tasks';
+import { TaskTracker, describeRun } from './tasks';
 
 interface Req { version: number; requestId: string; method: string; params: unknown }
 
@@ -80,4 +80,20 @@ test('polls while tasks are active', async () => {
   const m = requests.length;
   await tick(40);
   assert.equal(requests.length, m);
+});
+
+test('a workflow is described by its steps, not by its agent list', async () => {
+  const wf = { id: 'w1', kind: 'workflow', label: 'delegate, delegate, delegate', state: 'running', startedAt: 1700000000000, children: [
+    { id: 'media', label: 'media', state: 'running' }, { id: 'publish', label: 'publish', state: 'running' },
+    { id: 'web', label: 'web', state: 'complete' }, { id: 'x', label: 'x', state: 'failed' },
+  ] };
+  assert.equal(describeRun(wf), 'media、publish 进行中 · 1/4 完成');
+  assert.equal(describeRun({ ...wf, children: [{ id: 'a', label: 'a', state: 'complete' }, { id: 'b', label: 'b', state: 'complete' }] }), '2/2 完成');
+  assert.equal(describeRun({ label: 'delegate', children: [{ id: 'delegate', label: 'delegate', state: 'running' }] }), 'delegate');
+  assert.equal(describeRun({ label: 'review diff' }), 'review diff');
+  const { bus } = fakeSubagents(() => [wf]);
+  const t = new TaskTracker({ eventBus: bus, onChange: () => {}, pollMs: 10_000 });
+  await t.refresh();
+  assert.equal(t.current()[0]!.goal, 'media、publish 进行中 · 1/4 完成');
+  t.dispose();
 });

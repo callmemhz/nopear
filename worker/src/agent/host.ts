@@ -928,6 +928,7 @@ export class SessionHost {
     live.unsub = session.subscribe((e) => this.onEvent(live, e as unknown as { type: string; [k: string]: unknown }));
     this.live.set(meta.id, live);
     this.scheduleIdle(live);
+    void tracker.refresh(); // runs started before this session was (re)loaded in this process
     return live;
   }
 
@@ -1043,6 +1044,9 @@ export class SessionHost {
       }
       case 'tool_execution_end':
         live.progressAt.delete(String(e.toolCallId ?? ''));
+        // pi-subagents announces detached single/chain runs on its bus, but not async workflows: look after any
+        // subagent call (launch, status, steer…) so a workflow shows up in the task list too.
+        if (String(e.toolName ?? '').toLowerCase() === 'subagent') void live.tracker.refresh();
         break;
       default:
         break;

@@ -4,7 +4,20 @@ import type { BackgroundTask, TaskState } from '@nopear/protocol';
 import { randomId } from '@nopear/core/crypto';
 
 const ACTIVE: ReadonlySet<string> = new Set<TaskState>(['queued', 'running', 'paused']);
-interface Run { id?: unknown; kind?: unknown; label?: unknown; state?: unknown; startedAt?: unknown }
+interface Run { id?: unknown; kind?: unknown; label?: unknown; state?: unknown; startedAt?: unknown; children?: Run[] }
+
+/**
+ * What a run is doing, for the task list. A workflow's own label is just its agents ("delegate, delegate, …"), so
+ * it is described by its steps instead: the ones still active by name, plus how many are done.
+ */
+export function describeRun(r: Run): string {
+  const kids = Array.isArray(r.children) ? r.children : [];
+  if (kids.length < 2) return String(r.label ?? '');
+  const active = kids.filter((c) => ACTIVE.has(String(c.state))).map((c) => String(c.label ?? c.id ?? ''));
+  const done = kids.filter((c) => String(c.state) === 'complete').length;
+  const head = active.length ? `${active.join('、')} 进行中 · ` : '';
+  return `${head}${done}/${kids.length} 完成`;
+}
 interface Reply { success?: boolean; data?: { asyncSnapshot?: { runs?: Run[] } }; error?: { message?: string } }
 
 export class TaskTracker {
@@ -44,7 +57,7 @@ export class TaskTracker {
         startedAt = this.firstSeen.get(r.id) ?? new Date().toISOString();
         this.firstSeen.set(r.id, startedAt);
       }
-      next.push({ id: r.id, agent: String(r.kind ?? ''), goal: String(r.label ?? ''), state: r.state as TaskState, startedAt });
+      next.push({ id: r.id, agent: String(r.kind ?? ''), goal: describeRun(r), state: r.state as TaskState, startedAt });
     }
     const changed = JSON.stringify(next) !== JSON.stringify(this.tasks);
     this.tasks = next;
