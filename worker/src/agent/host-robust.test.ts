@@ -34,10 +34,10 @@ const rtP = (async () => {
   return createModelRuntime(loadConfig({ NOPEAR_SAAS_URL: 'http://s', NOPEAR_HOME: home, NOPEAR_PI_AUTH: join(home, 'a.json'), NOPEAR_PI_MODELS: join(home, 'm.json') }));
 })();
 
-async function env(opts: { home?: string; idleMs?: number; extensions?: InlineExtension[] } = {}): Promise<Env> {
+async function env(opts: { home?: string; idleMs?: number; extensions?: InlineExtension[]; autoTitle?: boolean } = {}): Promise<Env> {
   const home = opts.home ?? mkdtempSync(join(tmpdir(), 'hostr-'));
   const cfg = loadConfig({ NOPEAR_SAAS_URL: 'http://saas.test', NOPEAR_HOME: home, NOPEAR_DEFAULT_CWD: join(home, 'work'), NOPEAR_DEFAULT_MODEL: 'faux/echo',
-    NOPEAR_PI_AUTH: join(home, 'auth.json'), NOPEAR_PI_MODELS: join(home, 'models.json'), NOPEAR_IDLE_DISPOSE_MS: String(opts.idleMs ?? 60000) });
+    NOPEAR_PI_AUTH: join(home, 'auth.json'), NOPEAR_PI_MODELS: join(home, 'models.json'), NOPEAR_IDLE_DISPOSE_MS: String(opts.idleMs ?? 60000), NOPEAR_AUTO_TITLE: opts.autoTitle === false ? '0' : '1' });
   const meta = new SlowMeta(join(home, 'sessions.json'));
   await meta.load();
   const blobs = new CountingBlobs(cfg.blobsDir);
@@ -621,4 +621,49 @@ test('idle dispose emits session_shutdown to extensions before disposing (pi-sub
   await host.waitIdle(sid);
   await host.shutdown();
   assert.deepEqual(events, ['start', 'shutdown:quit', 'start', 'shutdown:quit']);
+});
+
+test('auto title after the first reply; a client rename wins and is never overwritten', async () => {
+  const { host, meta } = await env();
+  const sid = await idleSession(host, 'please name me');
+  const until = async (pred: () => boolean) => { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > 5000) throw new Error('timeout'); await sleep(20); } };
+  await until(() => meta.get(sid)?.titleSource === 'auto');
+  const auto = meta.get(sid)!.title;
+  assert.notEqual(auto, 'please name me', 'the faux model answered, so the title came from the model');
+  assert.ok(auto.length > 0 && [...auto].length <= 40);
+  // client rename → user; a later run does not re-title
+  await host.update({ sessionId: sid, title: '我的标题' });
+  assert.equal(meta.get(sid)!.titleSource, 'user');
+  await host.send({ sessionId: sid, text: 'again', clientMsgId: 'again' });
+  await host.waitIdle(sid);
+  await sleep(100);
+  assert.equal(meta.get(sid)!.title, '我的标题');
+  // an explicit title at creation is the user's too: no auto title
+  const s2 = await host.create({ text: 'x', title: '手动', clientMsgId: 'c2' });
+  await host.waitIdle(s2.id);
+  await sleep(100);
+  assert.deepEqual([meta.get(s2.id)!.title, meta.get(s2.id)!.titleSource], ['手动', 'user']);
+});
+
+test('NOPEAR_AUTO_TITLE=0 keeps the first-prompt title', async () => {
+  const { host, meta } = await env({ autoTitle: false });
+  const sid = await idleSession(host, 'keep me');
+  await sleep(150);
+  assert.deepEqual([meta.get(sid)!.title, meta.get(sid)!.titleSource], ['keep me', 'prompt']);
+});
+
+test('session_rename: the agent can rename its session, but never over a user-set title', async () => {
+  const { host, meta } = await env({ autoTitle: false });
+  const sid = await idleSession(host, 'hello');
+  await host.send({ sessionId: sid, text: 'tool:session_rename {"title":"「爬山游戏改画风」。"}', clientMsgId: 'r1' });
+  await host.waitIdle(sid);
+  assert.deepEqual([meta.get(sid)!.title, meta.get(sid)!.titleSource], ['爬山游戏改画风', 'agent']);
+  await host.update({ sessionId: sid, title: '我定的' });
+  await host.send({ sessionId: sid, text: 'tool:session_rename {"title":"agent 想改"}', clientMsgId: 'r2' });
+  await host.waitIdle(sid);
+  assert.deepEqual([meta.get(sid)!.title, meta.get(sid)!.titleSource], ['我定的', 'user']);
+  const page = await host.page({ sessionId: sid });
+  const results = page.messages.flatMap((m) => m.blocks).filter((b) => b.type === 'tool_result').map((b) => (b as { text?: string }).text);
+  assert.ok(results.some((t) => t?.includes('会话标题已改为')), JSON.stringify(results));
+  assert.ok(results.some((t) => t?.includes('用户手动设置过标题')), JSON.stringify(results));
 });

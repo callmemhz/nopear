@@ -28,6 +28,7 @@ import { listModels, modelKey, resolveModel } from './models';
 import { appendOnce, rewriteSystemPrompt } from './persona';
 import { compactionOverrides } from './compaction';
 import { normalizeImageBlocks } from './image-normalize';
+import { SESSION_RENAME_TOOL, AUTO_TITLE_SYSTEM, autoTitlePrompt, canRetitle, cleanTitle, createSessionRenameTool, wantsAutoTitle, type TitleSource } from './titles';
 import { newEpoch, SyncLog, type Uncursored } from './synclog';
 import { TaskTracker } from './tasks';
 
@@ -95,6 +96,8 @@ interface Live {
   running: boolean;
   /** Error text of the last run when it ended with stopReason 'error'; undefined otherwise. */
   lastError: string | undefined;
+  /** An automatic title was already attempted for this Live (success or failure): never retried in a loop. */
+  titleTried?: boolean;
   chain: Promise<void>;
   idleWaiters: Array<() => void>;
   progressAt: Map<string, number>;
@@ -232,7 +235,7 @@ export class SessionHost {
 
   private toolsAllowlist(meta: SessionMeta, askName: string): { tools?: string[] } {
     const list = this.deps.toolsFor?.(meta);
-    return list ? { tools: [...new Set([...list, askName])] } : {};
+    return list ? { tools: [...new Set([...list, askName, SESSION_RENAME_TOOL])] } : {};
   }
 
   async costUsd(id: string): Promise<number> {
@@ -264,6 +267,7 @@ export class SessionHost {
       id: sm.getSessionId(), kind: 'chat', title: opts.title ?? args.title ?? (text.trim().slice(0, 40) || '新会话'),
       cwd, sessionFile: sm.getSessionFile() ?? '', createdAt: now, lastActivityAt: now, preview: '',
       pinned: false, starred: false, archived: false, model: modelKey(model), thinking: args.thinking ?? this.cfg.defaultThinking,
+      titleSource: opts.title !== undefined || args.title !== undefined ? 'user' : 'prompt',
     };
     const projectId = opts.projectId ?? args.projectId ?? this.deps.autoProject?.(cwd);
     if (projectId) meta.projectId = projectId;
@@ -289,6 +293,7 @@ export class SessionHost {
     for (const k of ['title', 'pinned', 'starred', 'archived', 'thinking'] as const) {
       if (args[k] !== undefined) (patch as Record<string, unknown>)[k] = args[k];
     }
+    if (args.title !== undefined) patch.titleSource = 'user';
     const tag = args.projectId;
     if (tag !== undefined && tag !== null && (typeof tag !== 'string' || !tag)) throw new OpError('bad_request', 'projectId must be a non-empty string or null');
     if (tag) patch.projectId = tag;
@@ -720,6 +725,47 @@ export class SessionHost {
     return m;
   }
 
+  /**
+   * Set a session's title from `source`, unless a higher-ranked source set the current one (titles.ts).
+   * Returns null when applied, otherwise the reason (shown to the agent by session_rename).
+   */
+  private async retitle(id: string, title: string, source: TitleSource): Promise<string | null> {
+    const cur = this.deps.meta.get(id);
+    if (!cur) return '会话不存在';
+    if (!canRetitle(cur.titleSource, source)) return '用户手动设置过标题，保持不变';
+    if (cur.title === title && cur.titleSource === source) return null;
+    await this.deps.meta.patch(id, { title, titleSource: source });
+    const live = this.live.get(id);
+    if (live) live.meta = this.metaOf(id);
+    this.sessionChanged(id);
+    return null;
+  }
+
+  /** After a completed run: give a session still titled by its first prompt a short model-written title (once per Live). */
+  private async maybeAutoTitle(live: Live): Promise<void> {
+    if (!this.cfg.autoTitle || live.titleTried || live.disposed || live.lastError) return;
+    if (!wantsAutoTitle(this.deps.meta.get(live.meta.id)?.titleSource)) return;
+    const msgs = (live.sm.getBranch() as Entry[]).filter((e) => e.type === 'message').map((e) => e.message!);
+    const firstUser = userText(msgs.find((m) => m.role === 'user')?.content);
+    const firstReply = msgs.filter((m) => m.role === 'assistant').map((m) => userText(m.content)).find((t) => t.trim()) ?? '';
+    if (!firstUser.trim() || !firstReply.trim()) return; // nothing to name yet (e.g. only tool calls so far)
+    live.titleTried = true;
+    const model = live.session.model as Model<Api> | undefined;
+    if (!model) return;
+    try {
+      const res = await this.deps.models.completeSimple(model, {
+        systemPrompt: AUTO_TITLE_SYSTEM,
+        messages: [{ role: 'user', content: autoTitlePrompt(firstUser, firstReply), timestamp: Date.now() }],
+      }, { maxTokens: 64, signal: AbortSignal.timeout(30_000) });
+      const title = cleanTitle(userText(res.content));
+      if (!title || res.stopReason === 'error') return;
+      // Re-check: the user (or the agent) may have renamed it while the title was being generated.
+      if (wantsAutoTitle(this.deps.meta.get(live.meta.id)?.titleSource)) await this.retitle(live.meta.id, title, 'auto');
+    } catch (err) {
+      console.warn(`[nopear] auto title failed (${live.meta.id}): ${(err as Error)?.message ?? err}`);
+    }
+  }
+
   private notify(id: string): void {
     const m = this.deps.meta.get(id);
     if (!m) return;
@@ -859,7 +905,8 @@ export class SessionHost {
     const model = resolveModel(this.deps.models, meta.model) ?? this.pickModel(undefined);
     const { session } = await createAgentSession({
       cwd: meta.cwd, agentDir: this.cfg.agentDir, model, thinkingLevel: meta.thinking, modelRuntime: this.deps.models,
-      sessionManager: sm, resourceLoader: loader, customTools: [ask, ...(this.deps.extraTools?.(meta) ?? [])],
+      sessionManager: sm, resourceLoader: loader,
+      customTools: [ask, createSessionRenameTool({ rename: (t) => this.retitle(meta.id, t, 'agent') }), ...(this.deps.extraTools?.(meta) ?? [])],
       ...(this.toolsAllowlist(meta, ask.name)),
     });
     // Account auto-compaction: pi's defaults never fire before the provider rejects an image-heavy session.
@@ -1037,6 +1084,7 @@ export class SessionHost {
       }, 'leafId');
     }
     this.sessionChanged(live.meta.id);
+    void this.maybeAutoTitle(live);
     const waiters = live.idleWaiters.splice(0);
     for (const w of waiters) w();
     this.scheduleIdle(live);

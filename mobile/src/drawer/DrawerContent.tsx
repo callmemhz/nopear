@@ -1,7 +1,7 @@
 // Drawer content (mirrors the web sidebar): app header, nav rows, session search + filter, 「置顶」, sessions grouped by
 // project (collapsible, persisted; ＋ starts a session in that project), 「未分类」 last, and the account footer.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Session } from '@nopear/protocol';
@@ -196,9 +196,7 @@ export function DrawerContent() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: c.grouped }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 }}>
-        <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: c.tint, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>F</Text>
-        </View>
+        <Image source={require('../../assets/splash-icon.png')} style={{ width: 28, height: 28 }} accessibilityIgnoresInvertColors />
         <Text style={{ color: c.text, fontSize: 17, fontWeight: '700' }}>NoPear</Text>
       </View>
       <View style={{ paddingHorizontal: 8 }}>

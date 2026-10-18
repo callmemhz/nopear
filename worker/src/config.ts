@@ -17,6 +17,8 @@ export interface WorkerConfig {
   /** NOPEAR_DNS_ORDER: DNS result order for outbound connections. `ipv4first` (default) avoids stalls on hosts whose
    *  IPv6 path is flaky (the tunnel silently dies with 1006); `verbatim` keeps the resolver's order (IPv6-only hosts). */
   dnsOrder: 'ipv4first' | 'verbatim';
+  /** NOPEAR_AUTO_TITLE (default on): after the first reply, ask the session's model for a short title. */
+  autoTitle: boolean;
 }
 const expand = (p: string): string => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p);
 const num = (v: string | undefined, d: number): number => {
@@ -72,5 +74,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     installCode: env.NOPEAR_INSTALL_CODE?.trim() || null,
     envFile: resolve(process.cwd(), '.env'),
     dnsOrder,
+    autoTitle: !['0', 'false', 'off'].includes((env.NOPEAR_AUTO_TITLE ?? '').trim().toLowerCase()),
   };
 }

@@ -42,7 +42,7 @@ export function LoginPage() {
     <div className="flex h-full items-center justify-center bg-zinc-50 p-6 dark:bg-zinc-950">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-2.5">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-zinc-900 text-sm font-bold text-white dark:bg-white dark:text-zinc-900">F</div>
+          <img src="/favicon.svg" alt="" className="h-9 w-9 shrink-0" />
           <div>
             <div className="text-[15px] font-semibold">NoPear</div>
             <div className="muted text-xs">远程派活给你的每一台机器</div>

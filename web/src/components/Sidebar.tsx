@@ -112,7 +112,7 @@ export function Sidebar() {
       </div>
       <div className="flex items-center gap-2 px-3 pb-2 pt-3">
         <Link to="/" className="flex min-w-0 items-center gap-2 rounded-md" title="全部会话">
-          <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[11px] font-bold text-white">F</span>
+          <img src="/favicon.svg" alt="" className="h-6 w-6 shrink-0" />
           <span className="truncate text-[14px] font-semibold">NoPear</span>
         </Link>
       </div>

@@ -1,6 +1,6 @@
 // Login: editable SaaS URL (default from extra.saasUrl, set by NOPEAR_SAAS_URL at build time), Google (expo-web-browser) or dev login.
 import { useEffect, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { SaasError } from '@nopear/core';
 import type { SaasConfig } from '@nopear/protocol';
@@ -67,9 +67,7 @@ export default function Login() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: c.bg }}>
       <ScrollView contentContainerStyle={{ padding: 24, paddingTop: 96, gap: 18 }} keyboardShouldPersistTaps="handled">
         <View style={{ gap: 10, marginBottom: 12 }}>
-          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: c.tint, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>F</Text>
-          </View>
+          <Image source={require('../assets/splash-icon.png')} style={{ width: 52, height: 52 }} accessibilityIgnoresInvertColors />
           <Text style={{ color: c.text, fontSize: 30, fontWeight: '700' }}>NoPear</Text>
           <Text style={{ color: c.sub, fontSize: 15 }}>远程派活给 AI agent，实时看输出、发消息。</Text>
         </View>

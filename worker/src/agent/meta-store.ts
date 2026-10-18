@@ -4,11 +4,14 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { SessionKind, ThinkingLevel } from '@nopear/protocol';
+import type { TitleSource } from './titles';
 
 export interface SessionMeta {
   id: string; kind: SessionKind; projectId?: string; title: string; cwd: string; sessionFile: string;
   createdAt: string; lastActivityAt: string; preview: string; pinned: boolean; starred: boolean; archived: boolean;
   model: string; thinking: ThinkingLevel; leafId?: string | null;
+  /** Who set the title (see titles.ts); absent on sessions created before titles were tracked = 'prompt'. */
+  titleSource?: TitleSource;
 }
 
 interface Shape { version: 1; sessions: Record<string, SessionMeta> }
