@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- NoPear mark: a pear under a "prohibited" sign. Layers: pear (stem, leaf, body, highlight) then the red ring + slash. -->
+  <defs>
+    <linearGradient id="body" x1="0.2" y1="0.1" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#D6E36A"/>
+      <stop offset="0.55" stop-color="#A9C64A"/>
+      <stop offset="1" stop-color="#7FA53A"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6DAF45"/>
+      <stop offset="1" stop-color="#3F8433"/>
+    </linearGradient>
+  </defs>
+  <g id="pear" transform="translate(512 532) scale(0.82) translate(-512 -540)">
+    <path d="M512 262 C 510 230, 518 200, 536 176" fill="none" stroke="#6B4A2B" stroke-width="24" stroke-linecap="round"/>
+    <path d="M530 222 C 576 168, 664 168, 704 204 C 660 248, 576 258, 530 222 Z" fill="url(#leaf)"/>
+    <path d="M512 252
+             C 588 252, 628 318, 638 396
+             C 648 468, 744 500, 740 628
+             C 736 768, 634 852, 512 852
+             C 390 852, 288 768, 284 628
+             C 280 500, 376 468, 386 396
+             C 396 318, 436 252, 512 252 Z" fill="url(#body)"/>
+    <ellipse cx="404" cy="610" rx="44" ry="96" transform="rotate(14 404 610)" fill="#FFFFFF" opacity="0.32"/>
+  </g>
+  <g id="no" fill="none" stroke="#D63C2F" stroke-width="76">
+    <circle cx="512" cy="512" r="372"/>
+    <line x1="249" y1="249" x2="775" y2="775" stroke-linecap="butt"/>
+  </g>
+</svg>
