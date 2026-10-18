@@ -29,6 +29,7 @@ const P = {
   x: 'M18 6 6 18M6 6l12 12',
   monitor: 'M3 4h18v12H3zM8 20h8M12 16v4',
   undo: 'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+  shield: 'M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6ZM9 12l2 2 4-4',
 } as const;
 export type IconName = keyof typeof P;
 

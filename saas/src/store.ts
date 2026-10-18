@@ -1,7 +1,12 @@
 // SaasStore — abstract storage interface (Postgres can implement the same later).
-import type { AccountSettings, AllowlistRole, Card, CardState, MemoryDoc, MemoryScope, Project, SessionIndexEntry } from '@nopear/protocol';
+import type { AccessRequest, AccessRequestStatus, AccountSettings, AllowlistRole, Card, CardState, MemoryDoc, MemoryScope, Project, SessionIndexEntry } from '@nopear/protocol';
 
-export interface UserRow { id: string; email: string; googleSub: string | null; createdAt: string }
+export interface UserRow {
+  id: string; email: string; googleSub: string | null; createdAt: string;
+  /** Set while an admin has disabled the account (see AdminUser.disabled). */
+  disabledAt: string | null;
+  lastSeenAt: string | null;
+}
 export interface ClientRow { userId: string; clientPub: string; label: string; sig: string; createdAt: string }
 export interface WorkerRow {
   workerId: string; workerPub: string; secretHash: string; userId: string | null; label: string;
@@ -19,11 +24,18 @@ export interface SaasStore {
     upsertGoogle(sub: string, email: string): Promise<UserRow>;
     upsertDev(email: string): Promise<UserRow>;
     get(id: string): Promise<UserRow | null>;
+    /** Sorted by createdAt. */
+    list(): Promise<UserRow[]>;
+    /** Returns the updated row, or null when no such user. */
+    setDisabled(id: string, disabled: boolean): Promise<UserRow | null>;
+    touch(id: string, at: string): Promise<void>;
   };
   tokens: {
     create(userId: string, tokenHash: string, expiresAt: number): Promise<void>;
     get(tokenHash: string): Promise<{ userId: string; expiresAt: number } | null>;
     delete(tokenHash: string): Promise<void>;
+    /** Sign the user out everywhere (disable). */
+    deleteByUser(userId: string): Promise<void>;
   };
   clients: {
     upsert(userId: string, clientPub: string, label: string, sig: string): Promise<ClientRow>;
@@ -39,6 +51,10 @@ export interface SaasStore {
     /** Atomic: hash matches, not expired, unclaimed → assign to user and clear token; else null. */
     claim(workerId: string, tokenHash: string, userId: string, label: string | undefined, now: number): Promise<WorkerRow | null>;
     listByUser(userId: string): Promise<WorkerRow[]>;
+    /** Every registered worker, claimed or not (admin console). */
+    listAll(): Promise<WorkerRow[]>;
+    /** Remove a worker record entirely (admin: stale unclaimed machines). */
+    delete(workerId: string): Promise<boolean>;
     update(workerId: string, patch: { label?: string; lastSeenAt?: string; version?: string }): Promise<void>;
     unclaim(workerId: string): Promise<void>;
     /** Install-code claim: unclaimed → assign to user (label when given); already owned by the same user → row; else null. */
@@ -121,6 +137,20 @@ export interface SaasStore {
     put(email: string, role: AllowlistRole, addedBy: string): Promise<AllowlistRow | 'last_admin'>;
     /** One transaction: deleting the only admin → nothing deleted, 'last_admin'. */
     delete(email: string): Promise<'ok' | 'not_found' | 'last_admin'>;
+  };
+  /** Sign-in attempts by people outside the allowlist (see AccessRequest). */
+  accessRequests: {
+    /** Absent → new `pending`; present → attempts + 1 (status kept, so a rejection sticks). */
+    record(email: string): Promise<AccessRequest>;
+    get(email: string): Promise<AccessRequest | null>;
+    /** Newest first. */
+    list(): Promise<AccessRequest[]>;
+    setStatus(email: string, status: AccessRequestStatus): Promise<AccessRequest | null>;
+    delete(email: string): Promise<boolean>;
+  };
+  /** Aggregate counts for the admin console. */
+  admin: {
+    counts(): Promise<{ sessionsByUser: Record<string, number>; apiTokensByUser: Record<string, number>; sessions: number; cards: number }>;
   };
   settings: {
     /** Default `{ e2e: false }`. */

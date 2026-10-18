@@ -479,6 +479,35 @@ export type AllowlistRole = 'admin' | 'member';
 export interface AllowlistEntry { email: string; role: AllowlistRole; addedBy: string; createdAt: string }
 /** `GET /api/me`. Open mode: `role: null, allowlistEnabled: false`. */
 export interface MeResult { user: User; role: AllowlistRole | null; allowlistEnabled: boolean }
+
+// ---------- admin console (allowlist admins only; `/api/admin/*`) ----------
+/**
+ * Someone outside the allowlist signed in (verified Google email / dev login): instead of a bare rejection the
+ * attempt is recorded for an admin to approve (→ allowlist) or reject. A rejected email stays rejected (later
+ * attempts only bump `attempts`), so it never reappears as pending.
+ */
+export type AccessRequestStatus = 'pending' | 'rejected';
+export interface AccessRequest { email: string; status: AccessRequestStatus; attempts: number; requestedAt: string; updatedAt: string }
+/** A registered account as the admin sees it. `role` = allowlist role (null: not listed). */
+export interface AdminUser {
+  id: string; email: string; role: AllowlistRole | null; createdAt: string;
+  /** Last authenticated request (coarse: refreshed at most every few minutes). */
+  lastSeenAt: string | null;
+  /** Disabled accounts cannot sign in, call the API, use API tokens, or connect their machines. */
+  disabled: boolean;
+  machines: number; machinesOnline: number; sessions: number; apiTokens: number;
+}
+/** Every registered machine across accounts; unclaimed ones have `ownerId: null`. */
+export interface AdminMachine {
+  workerId: string; label: string; ownerId: string | null; ownerEmail: string | null;
+  version: string; online: boolean; lastSeenAt: string | null; createdAt: string;
+}
+export interface AdminOverview {
+  users: number; disabledUsers: number; allowlist: number; pendingRequests: number;
+  machines: number; machinesOnline: number; sessions: number; cards: number;
+  /** New accounts per UTC day, last 30 days, oldest first; days without signups are included with 0. */
+  signups: { date: string; count: number }[];
+}
 export type SaasEvent =
   | { type: 'machines'; machines: Machine[] }
   | { type: 'machine.updated'; machine: Machine }

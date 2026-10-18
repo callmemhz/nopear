@@ -409,6 +409,8 @@ test('migration 3 adds the allowlist table to a v3.1 (user_version 2) database',
   db.exec('DROP TABLE allowlist; PRAGMA user_version = 2;');
   // Undo migration 4 as well so it re-runs against a real v3.1 schema.
   db.exec('ALTER TABLE settings DROP COLUMN auto_compact_enabled; ALTER TABLE settings DROP COLUMN auto_compact_threshold_tokens; ALTER TABLE settings DROP COLUMN auto_compact_keep_recent_tokens;');
+  // ...and migration 5.
+  db.exec('ALTER TABLE users DROP COLUMN disabled_at; ALTER TABLE users DROP COLUMN last_seen_at; DROP TABLE access_requests;');
   db.close();
   const s2 = await openStore(`sqlite:${path}`);
   assert.equal(await s2.allowlist.count(), 0);

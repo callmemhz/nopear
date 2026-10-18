@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AllowlistEntry, AllowlistRole } from '@nopear/protocol';
+import type { AllowlistRole } from '@nopear/protocol';
 import { engine, useEngine } from '../engine';
 import { relativeTime } from '../lib/format';
 import { reportError } from './root';
@@ -155,7 +155,15 @@ export function Members() {
   if (!access) return null;
   if (!access.allowlistEnabled) return <MembersOpenMode />;
   if (access.role !== 'admin') return null;
-  return <MembersAdmin />;
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold">成员</h2>
+      <a href="/admin" className="card flex items-center gap-3 p-4 text-xs hover:bg-hover">
+        <span className="flex-1">白名单、加入申请、禁用账号和所有机器，都在<span className="font-medium">管理后台</span>里管理。</span>
+        <span className="text-subtle">打开 →</span>
+      </a>
+    </section>
+  );
 }
 
 function MembersOpenMode() {
@@ -173,67 +181,6 @@ function MembersOpenMode() {
       <div className="card flex items-center gap-4 p-4">
         <p className="flex-1 text-xs text-amber-700 dark:text-amber-300">白名单未启用：任何人都能登录。</p>
         <button className="btn-primary shrink-0 text-xs" disabled={busy || !email} onClick={() => void enable()}>启用白名单（把我设为管理员）</button>
-      </div>
-    </section>
-  );
-}
-
-function MembersAdmin() {
-  const qc = useQueryClient();
-  const entries = useQuery({ queryKey: ['allowlist'], queryFn: () => engine.listAllowlist() });
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<AllowlistRole>('member');
-  const [busy, setBusy] = useState(false);
-  const refresh = () => qc.invalidateQueries({ queryKey: ['allowlist'] });
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    try { await fn(); await refresh(); } catch (e) { reportError(e); } finally { setBusy(false); }
-  };
-  const add = () => {
-    const e = email.trim();
-    if (!e) return;
-    void run(async () => { await engine.putAllowlist(e, role); setEmail(''); });
-  };
-  const remove = (e: AllowlistEntry) => {
-    if (!confirm(`把 ${e.email} 移出白名单？其已登录的设备与 MCP token 将立即失效。`)) return;
-    void run(() => engine.deleteAllowlist(e.email));
-  };
-  const admins = entries.data?.filter((e) => e.role === 'admin').length ?? 0;
-  return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-sm font-semibold">成员</h2>
-        <p className="muted mt-1 text-xs">登录白名单：只有名单内的邮箱能登录；管理员可管理名单。移出后其已签发的登录与 MCP token 在下一次请求即失效。</p>
-      </div>
-      <form className="card flex gap-2 p-3" onSubmit={(ev) => { ev.preventDefault(); add(); }}>
-        <input className="input text-xs" name="allowlist-email" type="text" placeholder="邮箱（如 someone@example.com）" value={email} onChange={(ev) => setEmail(ev.target.value)} />
-        <select className="input w-28 shrink-0 text-xs" value={role} onChange={(ev) => setRole(ev.target.value as AllowlistRole)}>
-          <option value="member">{ROLE_LABEL.member}</option>
-          <option value="admin">{ROLE_LABEL.admin}</option>
-        </select>
-        <button type="submit" className="btn-primary shrink-0 text-xs" disabled={busy || !email.trim()}>添加</button>
-      </form>
-      <div className="space-y-1.5">
-        {entries.isLoading && <p className="muted text-xs">加载中…</p>}
-        {entries.isError && <p className="text-xs text-red-500">{String(entries.error)}</p>}
-        {entries.data?.map((e) => {
-          const sole = e.role === 'admin' && admins <= 1;
-          return (
-            <div key={e.email} data-email={e.email} className="card flex items-center gap-3 px-3 py-2 text-xs">
-              <span className="min-w-0 flex-1 truncate font-medium">{e.email}</span>
-              <span className="muted">{ROLE_LABEL[e.role]}</span>
-              <span className="muted">添加人 {e.addedBy}</span>
-              <span className="muted">{relativeTime(e.createdAt)}</span>
-              {sole && <span className="muted">至少保留一名管理员</span>}
-              {e.role === 'admin' ? (
-                <button className="btn-ghost px-2 py-0.5 text-xs" disabled={busy || sole} onClick={() => void run(() => engine.putAllowlist(e.email, 'member'))}>降为成员</button>
-              ) : (
-                <button className="btn-ghost px-2 py-0.5 text-xs" disabled={busy} onClick={() => void run(() => engine.putAllowlist(e.email, 'admin'))}>设为管理员</button>
-              )}
-              <button className="btn-danger px-2 py-0.5 text-xs" disabled={busy || sole} onClick={() => remove(e)}>移除</button>
-            </div>
-          );
-        })}
       </div>
     </section>
   );

@@ -13,6 +13,7 @@ import { BoardPage } from './routes/board';
 import { ProjectPage } from './routes/project';
 import { GlobalMemoryPage } from './routes/global-memory';
 import { SettingsPage } from './routes/settings';
+import { AdminPage } from './routes/admin';
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -52,12 +53,13 @@ const projectRoute = createRoute({ getParentRoute: () => appRoute, path: '/proje
 const boardRoute = createRoute({ getParentRoute: () => appRoute, path: '/board', component: BoardPage });
 const globalMemoryRoute = createRoute({ getParentRoute: () => appRoute, path: '/memory', component: GlobalMemoryPage });
 const settingsRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings', component: SettingsPage });
+const adminRoute = createRoute({ getParentRoute: () => appRoute, path: '/admin', component: AdminPage });
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authCallbackRoute,
   appRoute.addChildren([
-    homeRoute, sessionRoute, machinesRoute, claimRoute, memoryRoute, globalMemoryRoute, projectsRoute, projectRoute, boardRoute, settingsRoute,
+    homeRoute, sessionRoute, machinesRoute, claimRoute, memoryRoute, globalMemoryRoute, projectsRoute, projectRoute, boardRoute, settingsRoute, adminRoute,
   ]),
 ]);
 

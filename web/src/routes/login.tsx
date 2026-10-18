@@ -8,6 +8,8 @@ import { issueLoginNonce } from '../lib/loginNonce';
 const RETURN_KEY = 'nopear.loginReturn';
 /** Shown when SaaS refuses a login because the email is not on the login allowlist. */
 export const NOT_ALLOWED_MESSAGE = '该账号不在白名单，请联系管理员';
+/** Signed in from outside the allowlist: an access request was filed for an admin to approve. */
+export const ACCESS_PENDING_MESSAGE = '已提交加入申请，等管理员批准后重新登录即可';
 
 function loginError(e: unknown): string {
   if (e instanceof SaasError && e.status === 403 && e.code === 'forbidden') return NOT_ALLOWED_MESSAGE;

@@ -3,7 +3,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import {
   memoryKey, sessionKey,
-  type AccountSettings, type AutoCompactSettings, type AllowlistEntry, type AllowlistRole, type ApiTokenInfo, type Attachment, type Card, type CardPatch, type InstallCodeResult, type Machine,
+  type AccessRequest, type AccountSettings, type AdminMachine, type AdminOverview, type AdminUser, type AutoCompactSettings, type AllowlistEntry, type AllowlistRole, type ApiTokenInfo, type Attachment, type Card, type CardPatch, type InstallCodeResult, type Machine,
   type MachineEvent, type MemoryDoc, type MemoryScope, type Message, type Project, type RpcArgs, type RpcOp, type RpcResult, type SaasEvent,
   type Session, type SessionEvent, type SessionIndexEntry, type User, type WatchArgs, type WorkerInfo,
   SSE_PING_MS, SSE_STALL_MS,
@@ -89,6 +89,18 @@ export interface NoPearEngine {
   putAllowlist(email: string, role: AllowlistRole): Promise<AllowlistEntry>;
   /** Refreshes `access` afterwards (a 401 — you removed yourself — logs out). */
   deleteAllowlist(email: string): Promise<void>;
+  /** Admin console (allowlist admins only; the server answers 403 to everyone else). */
+  admin: {
+    overview(): Promise<AdminOverview>;
+    users(): Promise<AdminUser[]>;
+    setDisabled(userId: string, disabled: boolean): Promise<void>;
+    requests(): Promise<AccessRequest[]>;
+    approve(email: string, role: AllowlistRole): Promise<void>;
+    reject(email: string): Promise<void>;
+    deleteRequest(email: string): Promise<void>;
+    machines(): Promise<AdminMachine[]>;
+    removeMachine(workerId: string): Promise<{ deleted: boolean }>;
+  };
   onNotice(listener: (n: EngineNotice) => void): () => void;
   /** Write pending snapshot- and timeline-cache updates now (hosts call it on page hide / app background). */
   flushCache(): void;
@@ -1123,6 +1135,17 @@ export function createNoPearEngine(opts: {
     async deleteAllowlist(email) {
       await saas.deleteAllowlist(email);
       await refreshAccess();
+    },
+    admin: {
+      overview: () => saas.adminOverview(),
+      users: async () => (await saas.adminUsers()).users,
+      setDisabled: async (userId, disabled) => { await saas.adminSetDisabled(userId, disabled); },
+      requests: async () => (await saas.adminRequests()).requests,
+      approve: async (email, role) => { await saas.adminApproveRequest(email, role); },
+      reject: (email) => saas.adminRejectRequest(email),
+      deleteRequest: (email) => saas.adminDeleteRequest(email),
+      machines: async () => (await saas.adminMachines()).machines,
+      removeMachine: async (workerId) => ({ deleted: (await saas.adminRemoveMachine(workerId)).deleted }),
     },
     onNotice(l) { listeners.add(l); return () => { listeners.delete(l); }; },
     flushCache() { if (cacheTimer) writeCache(); flushTimelines(); },

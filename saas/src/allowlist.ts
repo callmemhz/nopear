@@ -16,3 +16,8 @@ export async function loginAllowed(store: SaasStore, email: string): Promise<boo
   if ((await store.allowlist.count()) === 0) return true;
   return (await store.allowlist.get(normalizeEmail(email))) !== null;
 }
+
+/** The single "may this account act" check: not disabled by an admin, and allowed by the login allowlist. */
+export async function accountUsable(store: SaasStore, user: { email: string; disabledAt: string | null }): Promise<boolean> {
+  return !user.disabledAt && loginAllowed(store, user.email);
+}

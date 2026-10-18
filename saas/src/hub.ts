@@ -281,6 +281,12 @@ export class WorkerHub {
       : { t: 'authz', claimed: false, clients: [], e2e: false });
   }
 
+  /** Drop one worker's tunnel now (admin disabled its owner / force-unbound it); in-flight RPCs and watches end. */
+  disconnect(workerId: string): void {
+    const c = this.conns.get(workerId);
+    if (c) this.drop(workerId, c, true);
+  }
+
   /** Disconnect a worker's tunnel (e.g. close on shutdown). */
   close(): void {
     clearInterval(this.timer);

@@ -8,16 +8,30 @@ import { Popover } from './Popover';
 import { Icon, type IconName } from './Icons';
 import { useResizable } from '../lib/useResizable';
 import { pickProjectTarget } from '@nopear/core';
+import { useAdminOverview } from '../routes/admin';
+
 
 const row = 'flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-[13.5px] text-ink/85 transition-colors hover:bg-hover';
 const rowActive = 'bg-active text-ink';
 
-function NavRow({ to, icon, label, exact }: { to: '/board' | '/projects' | '/memory' | '/machines'; icon: IconName; label: string; exact?: boolean }) {
+function NavRow({ to, icon, label, exact, badge }: { to: '/board' | '/projects' | '/memory' | '/machines' | '/admin'; icon: IconName; label: string; exact?: boolean; badge?: number }) {
   return (
     <Link to={to} className={row} activeProps={{ className: rowActive }} activeOptions={exact ? { exact: true } : undefined}>
       <Icon name={icon} size={16} className="text-subtle" />{label}
+      {!!badge && <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold leading-4 text-white" title={`${badge} 个待审批的加入申请`}>{badge}</span>}
     </Link>
   );
+}
+
+/** Admins only: the admin console, with the number of pending access requests. */
+function AdminNav() {
+  const access = useEngine((s) => s.access);
+  return access?.allowlistEnabled && access.role === 'admin' ? <AdminNavRow /> : null;
+}
+/** Mounted for admins only, so nobody else ever polls the admin API. */
+function AdminNavRow() {
+  const ov = useAdminOverview();
+  return <NavRow to="/admin" icon="shield" label="管理" badge={ov.data?.pendingRequests} />;
 }
 
 const FILTER_LABEL: Record<SessionFilter, string> = { all: '全部', starred: '星标', archived: '归档' };
@@ -130,6 +144,7 @@ export function Sidebar() {
         <NavRow to="/projects" icon="folder" label="项目" />
         <NavRow to="/memory" icon="book" label="记忆" exact />
         <NavRow to="/machines" icon="server" label="机器" />
+        <AdminNav />
       </nav>
       <div className="flex items-center gap-1 px-2 pb-1 pt-3">
         <label className="relative min-w-0 flex-1">

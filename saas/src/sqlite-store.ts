@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AccountSettings, AllowlistRole, Card, CardState, MemoryDoc, MemoryScope, Project, SessionIndexEntry, SessionStatus } from '@nopear/protocol';
+import type { AccessRequest, AccessRequestStatus, AccountSettings, AllowlistRole, Card, CardState, MemoryDoc, MemoryScope, Project, SessionIndexEntry, SessionStatus } from '@nopear/protocol';
 import { DEFAULT_AUTO_COMPACT, normalizeAutoCompact } from '@nopear/protocol';
 import type { AllowlistRow, ApiTokenRow, ClientRow, InstallCodeRow, RegisterWithCodeResult, SaasStore, UserRow, WorkerRow } from './store';
 
@@ -63,12 +63,29 @@ ALTER TABLE settings ADD COLUMN auto_compact_enabled INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE settings ADD COLUMN auto_compact_threshold_tokens INTEGER NOT NULL DEFAULT 300000;
 ALTER TABLE settings ADD COLUMN auto_compact_keep_recent_tokens INTEGER NOT NULL DEFAULT 20000;
 `,
+  // 5: admin console — disabled accounts, last activity, sign-in requests from outside the allowlist.
+  `
+ALTER TABLE users ADD COLUMN disabled_at TEXT;
+ALTER TABLE users ADD COLUMN last_seen_at TEXT;
+CREATE TABLE access_requests (
+  email TEXT PRIMARY KEY, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 1,
+  requested_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+`,
 ];
 /** Target schema version = number of migrations applied. */
 export const MIGRATIONS_COUNT = MIGRATIONS.length;
 
 function user(r: Row): UserRow {
-  return { id: String(r.id), email: String(r.email), googleSub: (r.google_sub as string | null) ?? null, createdAt: String(r.created_at) };
+  return {
+    id: String(r.id), email: String(r.email), googleSub: (r.google_sub as string | null) ?? null, createdAt: String(r.created_at),
+    disabledAt: (r.disabled_at as string | null) ?? null, lastSeenAt: (r.last_seen_at as string | null) ?? null,
+  };
+}
+function accessRequest(r: Row): AccessRequest {
+  return {
+    email: String(r.email), status: String(r.status) as AccessRequestStatus, attempts: Number(r.attempts),
+    requestedAt: String(r.requested_at), updatedAt: String(r.updated_at),
+  };
 }
 function client(r: Row): ClientRow {
   return { userId: String(r.user_id), clientPub: String(r.client_pub), label: String(r.label), sig: String(r.sig), createdAt: String(r.created_at) };
@@ -197,6 +214,14 @@ export class SqliteSaasStore implements SaasStore {
       const r = this.one('SELECT * FROM users WHERE id = ?', id);
       return r ? user(r) : null;
     },
+    list: async (): Promise<UserRow[]> => this.all('SELECT * FROM users ORDER BY created_at, rowid').map(user),
+    setDisabled: async (id: string, disabled: boolean): Promise<UserRow | null> => {
+      if (this.run('UPDATE users SET disabled_at = ? WHERE id = ?', disabled ? now() : null, id) === 0) return null;
+      return user(this.one('SELECT * FROM users WHERE id = ?', id)!);
+    },
+    touch: async (id: string, at: string): Promise<void> => {
+      this.run('UPDATE users SET last_seen_at = ? WHERE id = ?', at, id);
+    },
   };
 
   tokens = {
@@ -209,6 +234,9 @@ export class SqliteSaasStore implements SaasStore {
     },
     delete: async (tokenHash: string): Promise<void> => {
       this.run('DELETE FROM tokens WHERE token_hash = ?', tokenHash);
+    },
+    deleteByUser: async (userId: string): Promise<void> => {
+      this.run('DELETE FROM tokens WHERE user_id = ?', userId);
     },
   };
 
@@ -256,6 +284,8 @@ export class SqliteSaasStore implements SaasStore {
     },
     listByUser: async (userId: string): Promise<WorkerRow[]> =>
       this.all('SELECT * FROM workers WHERE user_id = ? ORDER BY created_at', userId).map(worker),
+    listAll: async (): Promise<WorkerRow[]> => this.all('SELECT * FROM workers ORDER BY created_at, rowid').map(worker),
+    delete: async (workerId: string): Promise<boolean> => this.run('DELETE FROM workers WHERE worker_id = ?', workerId) > 0,
     update: async (workerId: string, patch: { label?: string; lastSeenAt?: string; version?: string }): Promise<void> => {
       if (patch.label !== undefined) this.run('UPDATE workers SET label = ? WHERE worker_id = ?', patch.label, workerId);
       if (patch.lastSeenAt !== undefined) this.run('UPDATE workers SET last_seen_at = ? WHERE worker_id = ?', patch.lastSeenAt, workerId);
@@ -565,6 +595,41 @@ export class SqliteSaasStore implements SaasStore {
   private adminCount(): number {
     return Number(this.one("SELECT COUNT(*) AS n FROM allowlist WHERE role = 'admin'")!.n);
   }
+
+  accessRequests = {
+    record: async (email: string): Promise<AccessRequest> => {
+      const t = now();
+      this.run(
+        `INSERT INTO access_requests (email, status, attempts, requested_at, updated_at) VALUES (?, 'pending', 1, ?, ?)
+         ON CONFLICT(email) DO UPDATE SET attempts = attempts + 1, updated_at = excluded.updated_at`,
+        email, t, t,
+      );
+      return accessRequest(this.one('SELECT * FROM access_requests WHERE email = ?', email)!);
+    },
+    get: async (email: string): Promise<AccessRequest | null> => {
+      const r = this.one('SELECT * FROM access_requests WHERE email = ?', email);
+      return r ? accessRequest(r) : null;
+    },
+    list: async (): Promise<AccessRequest[]> =>
+      this.all('SELECT * FROM access_requests ORDER BY updated_at DESC, rowid DESC').map(accessRequest),
+    setStatus: async (email: string, status: AccessRequestStatus): Promise<AccessRequest | null> => {
+      if (this.run('UPDATE access_requests SET status = ?, updated_at = ? WHERE email = ?', status, now(), email) === 0) return null;
+      return accessRequest(this.one('SELECT * FROM access_requests WHERE email = ?', email)!);
+    },
+    delete: async (email: string): Promise<boolean> => this.run('DELETE FROM access_requests WHERE email = ?', email) > 0,
+  };
+
+  admin = {
+    counts: async () => {
+      const by = (sql: string) => Object.fromEntries(this.all(sql).map((r) => [String(r.user_id), Number(r.n)]));
+      return {
+        sessionsByUser: by('SELECT user_id, COUNT(*) AS n FROM session_index GROUP BY user_id'),
+        apiTokensByUser: by('SELECT user_id, COUNT(*) AS n FROM api_tokens GROUP BY user_id'),
+        sessions: Number(this.one('SELECT COUNT(*) AS n FROM session_index')!.n),
+        cards: Number(this.one('SELECT COUNT(*) AS n FROM cards')!.n),
+      };
+    },
+  };
 
   settings = {
     get: async (userId: string): Promise<AccountSettings> => {

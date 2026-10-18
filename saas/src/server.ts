@@ -4,7 +4,7 @@ import { hashToken, safeEq } from './auth';
 import { sha256Hex, signingPublicKey } from '@nopear/core/crypto';
 import { HEADER_WORKER, TUNNEL_MAX_FRAME_BYTES } from '@nopear/protocol';
 import { resolve } from 'node:path';
-import { loginAllowed } from './allowlist';
+import { accountUsable } from './allowlist';
 import { Collab } from './collab';
 import type { SaasConfigEnv } from './config';
 import { WorkerHub } from './hub';
@@ -58,9 +58,9 @@ export async function buildServer(opts: { config: SaasConfigEnv; store: SaasStor
     authenticate: async (token) => {
       const row = await store.apiTokens.get(hashToken(token));
       if (!row) return null;
-      // Login allowlist applies to personal API tokens too.
+      // Login allowlist and admin disable apply to personal API tokens too.
       const user = await store.users.get(row.userId);
-      if (!user || !(await loginAllowed(store, user.email))) return null;
+      if (!user || !(await accountUsable(store, user))) return null;
       await store.apiTokens.touch(row.id);
       return row.userId;
     },
@@ -89,6 +89,8 @@ export async function buildServer(opts: { config: SaasConfigEnv; store: SaasStor
       if (typeof workerId !== 'string' || !secret) return reject(401, 'Unauthorized');
       const w = await store.workers.get(workerId);
       if (!w || !safeEq(sha256Hex(secret), w.secretHash)) return reject(401, 'Unauthorized');
+      // A machine of a disabled account stays off the relay until the account is re-enabled.
+      if (w.userId && (await store.users.get(w.userId))?.disabledAt) return reject(403, 'Forbidden');
       wss.handleUpgrade(req, socket, head, (ws) => hub.attach(workerId, ws));
     })().catch(() => socket.destroy());
   });

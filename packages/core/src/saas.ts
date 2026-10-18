@@ -1,7 +1,7 @@
 // SaaS control-plane client (plaintext; SaaS is the counterparty) + raw data-plane POST.
 import { SSE_STALL_MS } from '@nopear/protocol';
 import type {
-  AccountSettings, AllowlistEntry, AllowlistRole, ApiTokenInfo, AutoCompactSettings, Card, CardPatch, CardState, Client, InstallCodeResult, Machine, MemoryDoc, MemoryScope,
+  AccessRequest, AccountSettings, AdminMachine, AdminOverview, AdminUser, AllowlistEntry, AllowlistRole, ApiTokenInfo, AutoCompactSettings, Card, CardPatch, CardState, Client, InstallCodeResult, Machine, MemoryDoc, MemoryScope,
   MeResult, Project, SaasConfig, SaasEvent, SessionIndexEntry, User,
 } from '@nopear/protocol';
 import type { Platform } from './platform';
@@ -83,6 +83,23 @@ export class SaasClient {
     return this.json('PUT', `/api/admin/allowlist/${encodeURIComponent(email)}`, { role });
   }
   async deleteAllowlist(email: string): Promise<void> { await this.json('DELETE', `/api/admin/allowlist/${encodeURIComponent(email)}`); }
+
+  // ---------- admin console ----------
+  adminOverview(): Promise<AdminOverview> { return this.json('GET', '/api/admin/overview'); }
+  adminUsers(): Promise<{ users: AdminUser[] }> { return this.json('GET', '/api/admin/users'); }
+  adminSetDisabled(userId: string, disabled: boolean): Promise<unknown> {
+    return this.json('PATCH', `/api/admin/users/${encodeURIComponent(userId)}`, { disabled });
+  }
+  adminRequests(): Promise<{ requests: AccessRequest[] }> { return this.json('GET', '/api/admin/requests'); }
+  adminApproveRequest(email: string, role: AllowlistRole): Promise<{ entry: AllowlistEntry }> {
+    return this.json('POST', `/api/admin/requests/${encodeURIComponent(email)}/approve`, { role });
+  }
+  async adminRejectRequest(email: string): Promise<void> { await this.json('POST', `/api/admin/requests/${encodeURIComponent(email)}/reject`, {}); }
+  async adminDeleteRequest(email: string): Promise<void> { await this.json('DELETE', `/api/admin/requests/${encodeURIComponent(email)}`); }
+  adminMachines(): Promise<{ machines: AdminMachine[] }> { return this.json('GET', '/api/admin/machines'); }
+  adminRemoveMachine(workerId: string): Promise<{ ok: true; deleted: boolean }> {
+    return this.json('DELETE', `/api/admin/machines/${encodeURIComponent(workerId)}`);
+  }
 
   // ---------- collaboration hub ----------
   settings(): Promise<{ settings: AccountSettings }> { return this.json('GET', '/api/settings'); }

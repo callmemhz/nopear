@@ -4,8 +4,9 @@ import {
   BINARY_RPC_TIMEOUT_MS, HEADER_CLIENT, HEADER_PLAIN, INSTALL_CODE_TTL_MS, PLAINTEXT_DISABLED_MESSAGE, SAAS_TOKEN_TTL_MS, SSE_PING_MS,
   type AllowlistEntry, type AllowlistRole, type CardPatch, type CardState, type InstallCodeResult, type Machine, type MeResult,
   type MemoryScope, type SaasEvent, type User,
+  type AdminMachine, type AdminOverview, type AdminUser,
 } from '@nopear/protocol';
-import { isValidEmail, loginAllowed, normalizeEmail } from './allowlist';
+import { accountUsable, isValidEmail, loginAllowed, normalizeEmail } from './allowlist';
 import { hashToken, isAllowedRedirect, safeEq, signState, verifyState } from './auth';
 import { CollabError, type Collab } from './collab';
 import type { SaasConfigEnv } from './config';
@@ -28,16 +29,20 @@ export interface RouteDeps {
 /** Per-user plaintext /api/events SSE subscribers. */
 export class EventsBus {
   private subs = new Map<string, Set<(e: SaasEvent) => void>>();
-  private streams = new Set<() => void>();
-  /** Track an open /api/events stream so shutdown can end it; returns an untrack fn. */
-  track(end: () => void): () => void {
-    this.streams.add(end);
+  private streams = new Map<() => void, string>();
+  /** Track an open /api/events stream of `userId` so shutdown (or disabling the account) can end it; returns an untrack fn. */
+  track(end: () => void, userId = ''): () => void {
+    this.streams.set(end, userId);
     return () => { this.streams.delete(end); };
   }
   /** End every open /api/events stream (server shutdown). */
   closeAll(): void {
-    for (const end of [...this.streams]) end();
+    for (const end of [...this.streams.keys()]) end();
     this.streams.clear();
+  }
+  /** End one user's open /api/events streams (account disabled). */
+  closeUser(userId: string): void {
+    for (const [end, uid] of [...this.streams]) if (uid === userId) { this.streams.delete(end); end(); }
   }
   subscribe(userId: string, fn: (e: SaasEvent) => void): () => void {
     let set = this.subs.get(userId);
@@ -91,9 +96,25 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     const t = await store.tokens.get(hashToken(tok));
     if (!t || t.expiresAt < Date.now()) return null;
     const u = await store.users.get(t.userId);
-    // Login allowlist: the single choke point for every saasToken-authenticated route.
-    if (!u || !(await loginAllowed(store, u.email))) return null;
+    // Login allowlist + admin disable: the single choke point for every saasToken-authenticated route.
+    if (!u || !(await accountUsable(store, u))) return null;
+    const nowMs = Date.now();
+    if (nowMs - (touched.get(u.id) ?? 0) > TOUCH_EVERY_MS) {
+      touched.set(u.id, nowMs);
+      await store.users.touch(u.id, new Date(nowMs).toISOString());
+    }
     return u;
+  }
+  /** lastSeenAt is coarse on purpose: one write per user every few minutes, not one per request. */
+  const touched = new Map<string, number>();
+  const TOUCH_EVERY_MS = 5 * 60_000;
+  /**
+   * Sign-in by someone the allowlist does not admit: when the list is enabled, record (or bump) an access request
+   * for an admin to approve. Returns the request status, or null in open mode (nothing to request).
+   */
+  async function requestAccess(email: string): Promise<'pending' | 'rejected' | null> {
+    if ((await store.allowlist.count()) === 0) return null;
+    return (await store.accessRequests.record(normalizeEmail(email))).status;
   }
   async function issueToken(userId: string): Promise<string> {
     const token = randomId(32);
@@ -115,8 +136,14 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     if (!config.devLogin) return fail(reply, 404, 'not_found', 'dev login disabled');
     const email = (req.body as { email?: unknown } | null)?.email;
     if (typeof email !== 'string' || !email.includes('@')) return fail(reply, 400, 'bad_request', 'email required');
-    if (!(await loginAllowed(store, email))) return fail(reply, 403, 'forbidden', 'email not allowed');
+    if (!(await loginAllowed(store, email))) {
+      const st = await requestAccess(email);
+      return st === 'pending'
+        ? fail(reply, 403, 'access_pending', '已提交加入申请，等管理员批准后即可登录')
+        : fail(reply, 403, 'forbidden', 'email not allowed');
+    }
     const u = await store.users.upsertDev(email.trim().toLowerCase());
+    if (u.disabledAt) return fail(reply, 403, 'forbidden', 'account disabled');
     return { token: await issueToken(u.id), user: toUser(u) };
   });
 
@@ -154,11 +181,14 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     if (!infoRes.ok) return fail(reply, 401, 'unauthorized', 'google userinfo failed');
     const info = (await infoRes.json()) as { sub?: string; email?: string; email_verified?: unknown };
     if (!info.sub || !info.email) return fail(reply, 401, 'unauthorized', 'google account missing email');
-    // Login allowlist: unverified emails are never trusted, even when listed.
-    if (info.email_verified !== true || !(await loginAllowed(store, info.email))) {
-      return reply.redirect(`${st.redirect}#error=not_allowed`);
+    // Login allowlist: unverified emails are never trusted, even when listed (and never recorded as requests).
+    if (info.email_verified !== true) return reply.redirect(`${st.redirect}#error=not_allowed`);
+    if (!(await loginAllowed(store, info.email))) {
+      const req = await requestAccess(info.email);
+      return reply.redirect(`${st.redirect}#error=${req === 'pending' ? 'access_pending' : 'not_allowed'}`);
     }
     const u = await store.users.upsertGoogle(info.sub, info.email);
+    if (u.disabledAt) return reply.redirect(`${st.redirect}#error=not_allowed`);
     const token = await issueToken(u.id);
     return reply.redirect(`${st.redirect}#token=${encodeURIComponent(token)}`);
   });
@@ -411,6 +441,126 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     return { ok: true };
   }));
 
+  // ---------- admin console (allowlist admins only) ----------
+  /** Admin console endpoints need an enabled allowlist (open mode has no admins) and an admin caller. */
+  const adminApi = (fn: (u: UserRow, req: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
+    api(async (u, req, reply) => {
+      if (!(await adminGate(u))) throw new CollabError('forbidden', 'admin console needs the login allowlist enabled');
+      return fn(u, req, reply);
+    });
+  const DAY_MS = 86_400_000;
+
+  app.get('/api/admin/overview', adminApi(async (): Promise<AdminOverview> => {
+    const [users, workers, allowlist, requests, counts] = await Promise.all([
+      store.users.list(), store.workers.listAll(), store.allowlist.list(), store.accessRequests.list(), store.admin.counts(),
+    ]);
+    const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+    const signups: AdminOverview['signups'] = [];
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date(today - i * DAY_MS).toISOString().slice(0, 10);
+      signups.push({ date, count: users.filter((x) => x.createdAt.slice(0, 10) === date).length });
+    }
+    const claimed = workers.filter((w) => w.userId);
+    return {
+      users: users.length, disabledUsers: users.filter((x) => x.disabledAt).length, allowlist: allowlist.length,
+      pendingRequests: requests.filter((r) => r.status === 'pending').length,
+      machines: claimed.length, machinesOnline: claimed.filter((w) => hub.isOnline(w.workerId)).length,
+      sessions: counts.sessions, cards: counts.cards, signups,
+    };
+  }));
+
+  app.get('/api/admin/users', adminApi(async () => {
+    const [users, workers, allowlist, counts] = await Promise.all([
+      store.users.list(), store.workers.listAll(), store.allowlist.list(), store.admin.counts(),
+    ]);
+    const roles = new Map(allowlist.map((e) => [e.email, e.role]));
+    const out: AdminUser[] = users.map((x) => {
+      const mine = workers.filter((w) => w.userId === x.id);
+      return {
+        id: x.id, email: x.email, role: roles.get(normalizeEmail(x.email)) ?? null, createdAt: x.createdAt,
+        lastSeenAt: x.lastSeenAt, disabled: !!x.disabledAt,
+        machines: mine.length, machinesOnline: mine.filter((w) => hub.isOnline(w.workerId)).length,
+        sessions: counts.sessionsByUser[x.id] ?? 0, apiTokens: counts.apiTokensByUser[x.id] ?? 0,
+      };
+    });
+    return { users: out };
+  }));
+
+  app.patch('/api/admin/users/:id', adminApi(async (u, req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const disabled = bodyOf(req).disabled;
+    if (typeof disabled !== 'boolean') return fail(reply, 400, 'bad_request', 'disabled must be a boolean');
+    if (disabled && id === u.id) return fail(reply, 400, 'bad_request', '不能禁用自己');
+    const target = await store.users.get(id);
+    if (!target) return fail(reply, 404, 'not_found', 'user not found');
+    if (disabled && (await store.allowlist.get(normalizeEmail(target.email)))?.role === 'admin') {
+      return fail(reply, 409, 'conflict', '不能禁用管理员，请先把他改成成员');
+    }
+    const row = (await store.users.setDisabled(id, disabled))!;
+    if (disabled) {
+      // Take effect now, not at the next request: sign out, end live streams, drop and refuse their machines.
+      await store.tokens.deleteByUser(id);
+      events.closeUser(id);
+      for (const w of await store.workers.listByUser(id)) hub.disconnect(w.workerId);
+    }
+    return { user: { id: row.id, email: row.email, disabled: !!row.disabledAt } };
+  }));
+
+  app.get('/api/admin/requests', adminApi(async () => ({ requests: await store.accessRequests.list() })));
+
+  app.post('/api/admin/requests/:email/approve', adminApi(async (u, req, reply) => {
+    const email = emailParam(req);
+    const role = bodyOf(req).role ?? 'member';
+    if (!isRole(role)) return fail(reply, 400, 'bad_request', "role must be 'admin' or 'member'");
+    if (!(await store.accessRequests.get(email))) return fail(reply, 404, 'not_found', 'no such request');
+    const r = await store.allowlist.put(email, role, normalizeEmail(u.email));
+    if (r === 'last_admin') return fail(reply, 409, 'conflict', '至少保留一名管理员');
+    await store.accessRequests.delete(email);
+    return { entry: toEntry(r) };
+  }));
+
+  app.post('/api/admin/requests/:email/reject', adminApi(async (_u, req, reply) => {
+    const r = await store.accessRequests.setStatus(emailParam(req), 'rejected');
+    if (!r) return fail(reply, 404, 'not_found', 'no such request');
+    return { request: r };
+  }));
+
+  app.delete('/api/admin/requests/:email', adminApi(async (_u, req, reply) => {
+    if (!(await store.accessRequests.delete(emailParam(req)))) return fail(reply, 404, 'not_found', 'no such request');
+    return { ok: true };
+  }));
+
+  app.get('/api/admin/machines', adminApi(async () => {
+    const [workers, users] = await Promise.all([store.workers.listAll(), store.users.list()]);
+    const emails = new Map(users.map((x) => [x.id, x.email]));
+    const machines: AdminMachine[] = workers.map((w) => ({
+      workerId: w.workerId, label: w.label, ownerId: w.userId, ownerEmail: w.userId ? emails.get(w.userId) ?? null : null,
+      version: w.version, online: hub.isOnline(w.workerId), lastSeenAt: w.lastSeenAt, createdAt: w.createdAt,
+    }));
+    return { machines };
+  }));
+
+  /** Claimed machine → force-unbind (same cascade as the owner's own unbind); unclaimed → delete the record. */
+  app.delete('/api/admin/machines/:workerId', adminApi(async (_u, req, reply) => {
+    const workerId = (req.params as { workerId: string }).workerId;
+    const w = await store.workers.get(workerId);
+    if (!w) return fail(reply, 404, 'not_found', 'machine not found');
+    if (!w.userId) {
+      hub.disconnect(workerId);
+      await store.workers.delete(workerId);
+      return { ok: true, deleted: true };
+    }
+    await store.workers.unclaim(workerId);
+    await hub.pushAuthz(workerId);
+    try {
+      await collab.onMachineRemoved(w.userId, workerId);
+    } catch (err) {
+      req.log.error({ err, workerId }, 'admin unbind cascade failed');
+    }
+    events.emit(w.userId, { type: 'machine.removed', workerId });
+    return { ok: true, deleted: false };
+  }));
+
   app.get('/api/events', async (req, reply) => {
     const u = await authUser(req);
     if (!u) return fail(reply, 401, 'unauthorized', 'login required');
@@ -426,7 +576,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     const push = (chunk: string) => { if (!closed && !sseWrite(raw, chunk)) { stop(); raw.destroy(); } };
     const ping = setInterval(() => push(': ping\n\n'), SSE_PING_MS);
     raw.on('close', stop);
-    untrack = events.track(() => { if (!closed) { stop(); raw.end(); } });
+    untrack = events.track(() => { if (!closed) { stop(); raw.end(); } }, u.id);
     raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
     const send = (e: SaasEvent) => push(`data: ${JSON.stringify(e)}\n\n`);
     const machines = (await store.workers.listByUser(u.id)).map((w) => toMachine(w, hub.isOnline(w.workerId)));

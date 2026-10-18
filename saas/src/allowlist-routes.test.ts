@@ -96,12 +96,13 @@ test('buildServer bootstrap: empty list → inserts admin; non-empty list unchan
   assert.equal(await s3.store.allowlist.count(), 0);
 });
 
-test('dev login: refused (403, no user) when not allowed; allowed emails normalized', async () => {
+test('dev login: refused (403, no user, access request filed) when not allowed; allowed emails normalized', async () => {
   const s = await server({ bootstrapAdmin: 'boss@x.com' });
   const c = client(s.base);
   const r = await c.json('/api/auth/dev', { method: 'POST', body: JSON.stringify({ email: 'intruder@x.com' }) });
   assert.equal(r.status, 403);
-  assert.deepEqual(r.body, { error: { code: 'forbidden', message: 'email not allowed' } });
+  assert.deepEqual(r.body, { error: { code: 'access_pending', message: '已提交加入申请，等管理员批准后即可登录' } });
+  assert.equal((await s.store.accessRequests.get('intruder@x.com'))?.status, 'pending');
   const users = (s.store as unknown as { db: { prepare(sql: string): { get(): { n: number } } } }).db.prepare('SELECT COUNT(*) AS n FROM users').get();
   assert.equal(Number(users.n), 0);
   const ok = await c.login('  BOSS@x.com ');
@@ -239,7 +240,7 @@ test('removed from the allowlist → 401 everywhere (me, api(), events, data pla
   assert.deepEqual(await statuses(), { me: 200, projects: 200, events: 200, rpc: 503, mcp: 200 });
 });
 
-test('google callback: not allowed / unverified → #error=not_allowed (no user); allowed → #token', async () => {
+test('google callback: not allowed → #error=access_pending (request filed); unverified → not_allowed; allowed → #token', async () => {
   const s = await server({ bootstrapAdmin: 'boss@x.com', googleClientId: 'cid', googleClientSecret: 'csecret' });
   const c = client(s.base);
   const origFetch = globalThis.fetch;
@@ -264,6 +265,9 @@ test('google callback: not allowed / unverified → #error=not_allowed (no user)
     const userCount = () => Number((s.store as unknown as { db: { prepare(sql: string): { get(): { n: number } } } }).db.prepare('SELECT COUNT(*) AS n FROM users').get().n);
 
     info = { sub: 's1', email: 'intruder@x.com', email_verified: true };
+    assert.equal(await callback(), 'http://localhost/auth/callback?n=abc#error=access_pending');
+    // once rejected, a later attempt is a plain refusal
+    await s.store.accessRequests.setStatus('intruder@x.com', 'rejected');
     assert.equal(await callback(), 'http://localhost/auth/callback?n=abc#error=not_allowed');
     info = { sub: 's2', email: 'boss@x.com', email_verified: false };
     assert.equal(await callback(), 'http://localhost/auth/callback?n=abc#error=not_allowed');

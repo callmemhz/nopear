@@ -5,7 +5,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { SaasError } from '@nopear/core';
 import type { SaasConfig } from '@nopear/protocol';
 import { engine, errorText, saasClient, useEngine } from '../src/engine';
-import { loginErrorFromRedirect, NOT_ALLOWED_MESSAGE } from '../src/loginRedirect';
+import { loginErrorAlert, loginErrorFromRedirect } from '../src/loginRedirect';
 import { Button, Field, usePalette } from '../src/theme';
 
 const REDIRECT = 'nopear://auth';
@@ -46,7 +46,7 @@ export default function Login() {
       if (res.type !== 'success') return;
       // SaaS refused the login (not on the login allowlist) → no token in the redirect.
       const loginErr = loginErrorFromRedirect(res.url);
-      if (loginErr) { Alert.alert('登录失败', loginErr === 'not_allowed' ? NOT_ALLOWED_MESSAGE : loginErr); return; }
+      if (loginErr) { Alert.alert(...loginErrorAlert(loginErr)); return; }
       const token = tokenFromRedirect(res.url);
       if (!token) throw new Error('登录回调里没有 token');
       await engine.completeLogin(token);
@@ -57,8 +57,9 @@ export default function Login() {
     setBusy('dev');
     try { await applyUrl(); await engine.loginDev(email.trim()); }
     catch (e) {
-      const notAllowed = e instanceof SaasError && e.status === 403 && e.code === 'forbidden';
-      Alert.alert('登录失败', notAllowed ? NOT_ALLOWED_MESSAGE : errorText(e));
+      if (e instanceof SaasError && e.status === 403 && (e.code === 'forbidden' || e.code === 'access_pending')) {
+        Alert.alert(...loginErrorAlert(e.code === 'forbidden' ? 'not_allowed' : e.code));
+      } else Alert.alert('登录失败', errorText(e));
     }
     finally { setBusy(null); }
   };
