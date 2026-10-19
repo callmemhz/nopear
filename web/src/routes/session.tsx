@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { emptyTimeline } from '@nopear/core';
+import { activeTaskCount, emptyTimeline } from '@nopear/core';
 import { sessionKey, type Session } from '@nopear/protocol';
 import { engine, useEngine } from '../engine';
 import { MessageList } from '../components/MessageList';
@@ -124,7 +124,7 @@ function SessionView({ workerId, sessionId }: { workerId: string; sessionId: str
     if (typed && session && typed !== session.title) engine.updateSession(workerId, sessionId, { title: typed }).catch(reportError);
   };
   const togglePanel = (t: SidePanelTab) => setPanel((p) => (p === t ? null : t));
-  const taskCount = session?.taskCount ?? timeline.tasks.length;
+  const taskCount = session?.taskCount ?? activeTaskCount(timeline.tasks);
 
   return (
     <div className="flex h-full">

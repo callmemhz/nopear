@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { sessionKey, THINKING_LEVELS, type Attachment } from '@nopear/protocol';
-import type { ViewItem } from '@nopear/core';
+import { activeTaskCount, type ViewItem } from '@nopear/core';
 import { engine, errorText, useEngine } from '../../../src/engine';
 import { modelLabel, sessionHref, sessionTitle } from '../../../src/format';
 import { clearActiveSession, setActiveSession } from '../../../src/notifications';
@@ -70,6 +70,7 @@ function SessionScreen({ workerId, sessionId }: { workerId: string; sessionId: s
   const onText = useCallback((t: string) => { setText(t); engine.setDraft(workerId, sessionId, t); }, [workerId, sessionId]);
   const prompt = timeline?.prompts[0] ?? null;
   const tasks = timeline?.tasks ?? [];
+  const runningTasks = activeTaskCount(tasks);
 
   useEffect(() => { if (prompt) setAskOpen(true); }, [prompt?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -85,7 +86,7 @@ function SessionScreen({ workerId, sessionId }: { workerId: string; sessionId: s
     const tag = session.projectId ? projects[session.projectId]?.name ?? session.projectId : null;
     actionMenu(sessionTitle(session), [
       { label: '文件', run: () => setFilesOpen(true) },
-      { label: `后台任务${tasks.length ? `（${tasks.length}）` : ''}`, run: () => setTasksOpen(true) },
+      { label: `后台任务${runningTasks ? `（${runningTasks}）` : ''}`, run: () => setTasksOpen(true) },
       ...flagOptions(session).slice(0, 2),
       { label: tag ? `项目标签：${tag}…` : '设置项目标签…', run: () => pickProjectTag(session, projects) },
       { label: '重命名', run: () => renameSession(session) },
@@ -94,7 +95,7 @@ function SessionScreen({ workerId, sessionId }: { workerId: string; sessionId: s
       { label: '模型与思考…', run: () => setModelOpen(true) },
       ...flagOptions(session).slice(2),
     ]);
-  }, [session, projects, tasks.length, workerId, forkAt]);
+  }, [session, projects, runningTasks, workerId, forkAt]);
 
   const actions = useMemo(() => ({
     onUserLongPress: (item: ViewItem) => {
@@ -146,9 +147,9 @@ function SessionScreen({ workerId, sessionId }: { workerId: string; sessionId: s
             <Text style={{ color: c.warn, textAlign: 'center', fontWeight: '600' }}>AI 在等你回答问题 · 点此作答</Text>
           </Pressable>
         ) : null}
-        {tasks.length ? (
+        {runningTasks ? (
           <Pressable onPress={() => setTasksOpen(true)} style={{ paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.sep }}>
-            <Text style={{ color: c.sub, fontSize: 13, textAlign: 'center' }}>{tasks.length} 个后台任务运行中 ›</Text>
+            <Text style={{ color: c.sub, fontSize: 13, textAlign: 'center' }}>{runningTasks} 个后台任务运行中 ›</Text>
           </Pressable>
         ) : null}
         <View style={{ flex: 1 }}>
@@ -178,7 +179,7 @@ function SessionScreen({ workerId, sessionId }: { workerId: string; sessionId: s
       </KeyboardAvoidingView>
       <AskSheet prompt={askOpen ? prompt : null} onClose={() => setAskOpen(false)}
         onSubmit={(answers, note) => engine.answerPrompt(workerId, sessionId, prompt!.id, answers, note)} />
-      <TasksSheet visible={tasksOpen} tasks={tasks} onClose={() => setTasksOpen(false)} onStop={(id) => engine.stopTask(workerId, sessionId, id)} />
+      <TasksSheet visible={tasksOpen} workerId={workerId} sessionId={sessionId} tasks={tasks} onClose={() => setTasksOpen(false)} onStop={(id) => engine.stopTask(workerId, sessionId, id)} />
       <FilesSheet visible={filesOpen} workerId={workerId} sessionId={sessionId} onClose={() => setFilesOpen(false)} />
       {session ? (
         <ModelPicker visible={modelOpen} models={info?.models ?? []} model={session.model} thinking={session.thinking}

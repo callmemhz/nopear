@@ -38,6 +38,7 @@ export function createOps(deps: OpsDeps): { ops: OpHandlers; watches: WatchHandl
     'messages.queue.update': async (a) => { await host.queueUpdate(a); return {}; },
     'prompts.answer': async (a) => { await host.answerPrompt(a); return {}; },
     'tasks.stop': async (a) => { await host.stopTask(a.sessionId, a.taskId); return {}; },
+    'tasks.transcript': async (a) => host.taskTranscript(a),
 
     'files.list': async (a) => listDir(host.get(a.sessionId).cwd, a.path),
     'files.read': async (a) => {

@@ -26,4 +26,7 @@ export {
   toolCategory, entryState, summarizeTools, buildTurns, sameEntries, sameSegments, isLongText,
   type ToolEntry, type ThinkingEntry, type GroupEntry, type Segment, type Turn, type ToolCategory, type EntryState, type ToolSummary,
 } from './toolGroups';
+export {
+  TASK_STATE_LABEL, taskTone, splitTasks, activeTaskCount, taskTitle, activityLine, taskSeconds, transcriptTimeline, type TaskTone,
+} from './tasks';
 export { createNoPearEngine, type EngineNotice, type EngineState, type NoPearEngine, type MachineConn } from './engine';

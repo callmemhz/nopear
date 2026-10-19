@@ -5,7 +5,7 @@ import {
   memoryKey, sessionKey,
   type AccessRequest, type AccountSettings, type AdminMachine, type AdminOverview, type AdminUser, type AutoCompactSettings, type AllowlistEntry, type AllowlistRole, type ApiTokenInfo, type Attachment, type Card, type CardPatch, type InstallCodeResult, type Machine,
   type MachineEvent, type MemoryDoc, type MemoryScope, type Message, type Project, type RpcArgs, type RpcOp, type RpcResult, type SaasEvent,
-  type Session, type SessionEvent, type SessionIndexEntry, type User, type WatchArgs, type WorkerInfo,
+  type Session, type SessionEvent, type SessionIndexEntry, type TaskTranscriptRef, type User, type WatchArgs, type WorkerInfo,
   SSE_PING_MS, SSE_STALL_MS,
 } from '@nopear/protocol';
 import { b64url, fromB64url, generateClientKey, publicKeyOf, randomId, type KeyPair } from './crypto';
@@ -64,6 +64,8 @@ export interface NoPearEngine {
   updateSession(workerId: string, sessionId: string, patch: Omit<RpcArgs<'sessions.update'>, 'sessionId'>): Promise<void>;
   answerPrompt(workerId: string, sessionId: string, promptId: string, answers: Record<string, string>, note?: string): Promise<void>;
   stopTask(workerId: string, sessionId: string, taskId: string): Promise<void>;
+  /** Read-only conversation of a background run / workflow step (`BackgroundTask.transcript`, `TaskStep.transcript`). */
+  taskTranscript(workerId: string, sessionId: string, ref: TaskTranscriptRef): Promise<RpcResult<'tasks.transcript'>>;
   rpc<O extends RpcOp>(workerId: string, op: O, args: RpcArgs<O>): Promise<RpcResult<O>>;
   claim(workerId: string, claimToken: string, label?: string): Promise<void>;
   renameMachine(workerId: string, label: string): Promise<void>;
@@ -1052,6 +1054,7 @@ export function createNoPearEngine(opts: {
       updateTimeline(sessionKey(workerId, sessionId), (t) => ({ ...t, prompts: t.prompts.filter((p) => p.id !== promptId) }));
     },
     async stopTask(workerId, sessionId, taskId) { await rpc(workerId, 'tasks.stop', { sessionId, taskId }); },
+    taskTranscript(workerId, sessionId, ref) { return rpc(workerId, 'tasks.transcript', { sessionId, runId: ref.runId, step: ref.step }); },
     rpc,
     async claim(workerId, claimToken, label) {
       const { machine } = await saas.claim(workerId, claimToken, label);

@@ -120,8 +120,42 @@ export interface AskOption { label: string; description?: string }
 export interface AskQuestion { question: string; header: string; multiSelect: boolean; options: AskOption[] }
 export interface Prompt { id: string; sessionId: string; questions: AskQuestion[]; createdAt: string }
 
-export type TaskState = 'queued' | 'running' | 'paused';
-export interface BackgroundTask { id: string; agent: string; goal: string; state: TaskState; startedAt: string; model?: string }
+/** queued/running/paused = active (can be stopped); the rest = finished, kept briefly so its transcript stays reachable. */
+export type TaskState = 'queued' | 'running' | 'paused' | 'complete' | 'failed' | 'stopped';
+export const ACTIVE_TASK_STATES: readonly TaskState[] = ['queued', 'running', 'paused'];
+export const isActiveTask = (t: { state: TaskState }): boolean => ACTIVE_TASK_STATES.includes(t.state);
+/** What a run (or one workflow step) is doing / last did. */
+export interface TaskActivity {
+  /** Tool running now, or the last one used (`toolArgs` = a short preview of its arguments). */
+  tool?: string; toolArgs?: string;
+  turns?: number; tools?: number;
+  /** Last line of its own output. */
+  output?: string;
+  lastActivityAt?: string;
+}
+/** Where a run's conversation lives: pass to `tasks.transcript`. */
+export interface TaskTranscriptRef { runId: string; step: number }
+/** One step of a workflow (or of a chain / parallel run). */
+export interface TaskStep {
+  key: string; label: string; agent: string; state: TaskState;
+  startedAt?: string; endedAt?: string; model?: string;
+  activity?: TaskActivity; transcript?: TaskTranscriptRef;
+  /** Why it failed (model / provider error, timeout…). */
+  error?: string;
+}
+export interface BackgroundTask {
+  id: string;
+  /** `subagent` | `workflow` | `chain` | `parallel`, or the agent name. */
+  agent: string;
+  goal: string; state: TaskState; startedAt: string; endedAt?: string; model?: string;
+  activity?: TaskActivity;
+  /** Why it failed (model / provider error, timeout…). */
+  error?: string;
+  /** Set for multi-step runs (workflows, chains, parallel). */
+  steps?: TaskStep[];
+  /** Set for a single-agent run. */
+  transcript?: TaskTranscriptRef;
+}
 
 /** A `messages.send` queued by pi while the session runs (not yet delivered to the model). */
 export type QueueDelivery = 'followUp' | 'steer';
@@ -413,6 +447,11 @@ export interface RpcCatalog {
   'messages.queue.update': { args: SessionRef & { id: string; text?: string; delivery?: QueueDelivery }; result: Empty };
   'prompts.answer': { args: SessionRef & { promptId: string; answers: Record<string, string>; note?: string }; result: Empty };
   'tasks.stop': { args: SessionRef & { taskId: string }; result: Empty };
+  /**
+   * Read-only conversation of a background run (or one of its steps), from `BackgroundTask.transcript` /
+   * `TaskStep.transcript`. The newest `limit` messages (default 200); `hasMore` = older ones were left out.
+   */
+  'tasks.transcript': { args: SessionRef & TaskTranscriptRef & { limit?: number }; result: { messages: Message[]; hasMore: boolean; state?: TaskState } };
   'files.list': { args: SessionRef & { path?: string }; result: FileListing };
   'files.read': { args: SessionRef & { path: string }; result: BinaryResult };
   /** Machine-level directory picker: sub-directories only of an absolute path (or `~`, `~/x`); default = defaultCwd. */

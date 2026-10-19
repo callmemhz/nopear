@@ -2,9 +2,10 @@
 // maps pi events to protocol SessionEvents, and serializes every publish through a per-session chain
 // so cursors, replays and snapshots stay consistent.
 import { existsSync, mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { ensurePrivateDir } from '../fsutil';
 import { ensureAgentDirCredentials } from './agent-dir';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve as resolvePath, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import {
   createAgentSession, createEventBus, DefaultResourceLoader, SessionManager,
@@ -30,13 +31,19 @@ import { compactionOverrides } from './compaction';
 import { normalizeImageBlocks } from './image-normalize';
 import { SESSION_RENAME_TOOL, AUTO_TITLE_SYSTEM, autoTitlePrompt, canRetitle, cleanTitle, createSessionRenameTool, wantsAutoTitle, type TitleSource } from './titles';
 import { newEpoch, SyncLog, type Uncursored } from './synclog';
-import { TaskTracker } from './tasks';
+import { readRunStatus, subagentRunsDir, TaskTracker, taskState } from './tasks';
+
+/** tasks.transcript: newest messages returned by default / at most. */
+const TRANSCRIPT_PAGE = 200;
+const TRANSCRIPT_MAX = 1000;
 
 export interface HostDeps {
   config: WorkerConfig; meta: MetaStore; blobs: BlobStore; models: ModelRuntime; workerId: string;
   extraTools?: (meta: SessionMeta) => ToolDefinition[]; systemPromptAppend?: (meta: SessionMeta) => string | undefined;
   /** pi tool allowlist for a session (createAgentSession `tools`); undefined = pi default tools. */
   toolsFor?: (meta: SessionMeta) => string[] | undefined;
+  /** pi-subagents' async run state dir (tests); default = where pi-subagents puts it. */
+  subagentRunsDir?: string;
   /** Additional inline pi extensions loaded into every session (tests / embedders). */
   extraExtensions?: InlineExtension[];
   /** D6 auto-tag: cwd → projectId; consulted by create() only when neither opts.projectId nor args.projectId is set. */
@@ -621,9 +628,42 @@ export class SessionHost {
 
   async stopTask(id: string, taskId: string): Promise<void> {
     const live = await this.ensureLive(id);
-    if (!live.tracker.current().some((t) => t.id === taskId)) throw new OpError('not_found', `no task ${taskId}`);
+    if (!live.tracker.active().some((t) => t.id === taskId)) throw new OpError('not_found', `no running task ${taskId}`);
     await live.tracker.stop(taskId);
   }
+
+  /**
+   * Read-only conversation of a background run (or one step of it): the child's own pi session file, which
+   * pi-subagents keeps under this session's directory. Anything outside that directory is refused, so a client
+   * can only read the subagents of a session it can already read.
+   */
+  async taskTranscript(args: RpcArgs<'tasks.transcript'>): Promise<RpcResult<'tasks.transcript'>> {
+    const meta = this.metaOf(args.sessionId);
+    if (typeof args.runId !== 'string' || !Number.isInteger(args.step) || args.step < 0) throw new OpError('bad_request', 'runId and step are required');
+    const st = readRunStatus(args.runId, this.runsDir());
+    if (!st) throw new OpError('not_found', `no background run ${args.runId}`);
+    const step = st.steps?.[args.step];
+    if (!step) throw new OpError('not_found', `run ${args.runId} has no step ${args.step}`);
+    const state = taskState(step.status ?? st.state);
+    const root = meta.sessionFile.replace(/\.jsonl$/, '') + sep;
+    if (!step.sessionFile) return { messages: [], hasMore: false, state };
+    const file = resolvePath(step.sessionFile);
+    if (!meta.sessionFile || !file.startsWith(root)) throw new OpError('not_found', `run ${args.runId} does not belong to this session`);
+    let text: string;
+    try { text = await readFile(file, 'utf8'); } catch { return { messages: [], hasMore: false, state }; }
+    const all: Message[] = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let entry: unknown;
+      try { entry = JSON.parse(line); } catch { continue; } // a line being written right now
+      const m = await entryToMessage(meta.id, entry, this.deps.blobs, new Map());
+      if (m) all.push({ ...m, id: `${args.runId}:${args.step}:${m.id}` });
+    }
+    const limit = Math.min(Math.max(Math.trunc(args.limit ?? TRANSCRIPT_PAGE), 1), TRANSCRIPT_MAX);
+    return { messages: all.slice(-limit), hasMore: all.length > limit, state };
+  }
+
+  private runsDir(): string { return this.deps.subagentRunsDir ?? subagentRunsDir(); }
 
   async waitIdle(id: string): Promise<void> {
     const live = this.live.get(id);
@@ -717,7 +757,7 @@ export class SessionHost {
     const status = live && (live.running || live.session.isStreaming) ? 'running' : live?.lastError ? 'error' : 'idle';
     const s: Session = { id: m.id, workerId: this.deps.workerId, kind: m.kind, title: m.title, cwd: m.cwd, status,
       createdAt: m.createdAt, lastActivityAt: m.lastActivityAt, preview: m.preview, pinned: m.pinned, starred: m.starred, archived: m.archived,
-      model: m.model, thinking: m.thinking, promptCount: live?.asks.size ?? 0, taskCount: live?.tracker.current().length ?? 0 };
+      model: m.model, thinking: m.thinking, promptCount: live?.asks.size ?? 0, taskCount: live?.tracker.active().length ?? 0 };
     if (m.projectId) s.projectId = m.projectId;
     return s;
   }
@@ -918,9 +958,17 @@ export class SessionHost {
     // A distinct (non-noop) UI context makes ctx.hasUI true: pi-subagents otherwise drains every background run at
     // agent_end in headless sessions, keeping the turn "running" until the subagent finishes.
     await session.bindExtensions({ mode: 'rpc', uiContext: headlessUiContext(session.extensionRunner.getUIContext()), onError: (err) => console.warn(`[nopear] extension error (${meta.id}): ${JSON.stringify(err).slice(0, 300)}`) });
+    let lastRunning = 0;
     const tracker = new TaskTracker({
       eventBus: bus,
-      onChange: (tasks) => { this.enqueue(live, async () => ({ type: 'tasks', tasks })); this.sessionChanged(meta.id); this.scheduleIdle(live); },
+      readStatus: (runId) => readRunStatus(runId, this.runsDir()),
+      onChange: (tasks) => {
+        this.enqueue(live, async () => ({ type: 'tasks', tasks }));
+        // Activity (turns, current tool) changes every poll; the session row only shows how many are running.
+        const running = live.tracker.active().length;
+        if (running !== lastRunning) { lastRunning = running; this.sessionChanged(meta.id); }
+        this.scheduleIdle(live);
+      },
       log: (m) => console.warn(`[nopear] ${meta.id}: ${m}`),
     });
     live = { meta, sm, session, bus, tracker, watchers: new Set(), asks: new Map(), pendingSends: [], queue: [], queueRebuilding: false,
@@ -1130,7 +1178,7 @@ export class SessionHost {
 
   private isIdle(live: Live): boolean {
     return !this.closed && !live.disposed && live.watchers.size === 0 && !live.running && !live.session.isStreaming
-      && live.asks.size === 0 && live.tracker.current().length === 0;
+      && live.asks.size === 0 && live.tracker.active().length === 0;
   }
 
   private scheduleIdle(live: Live, delay = this.cfg.idleDisposeMs): void {
