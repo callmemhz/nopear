@@ -4,6 +4,7 @@ import { activeTaskCount, emptyTimeline } from '@nopear/core';
 import { sessionKey, type Session } from '@nopear/protocol';
 import { engine, useEngine } from '../engine';
 import { MessageList } from '../components/MessageList';
+import { BtwPanel } from '../components/BtwPanel';
 import { Composer } from '../components/Composer';
 import { AskCard } from '../components/AskCard';
 import { SidePanel, type SidePanelTab } from '../components/SidePanel';
@@ -158,6 +159,7 @@ function SessionView({ workerId, sessionId }: { workerId: string; sessionId: str
         <div className="min-h-0 flex-1">
           <MessageList workerId={workerId} sessionId={sessionId} timeline={timeline} actions={actions} />
         </div>
+        <BtwPanel workerId={workerId} sessionId={sessionId} items={timeline.btw ?? []} />
         {timeline.prompts.length > 0 && (
           <div className="max-h-[50%] overflow-y-auto px-4">
             {timeline.prompts.map((p) => <AskCard key={p.id} workerId={workerId} prompt={p} />)}

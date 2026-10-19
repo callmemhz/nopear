@@ -13,6 +13,7 @@ import { Composer } from '../../../src/components/Composer';
 import { QueueCards } from '../../../src/components/QueueCards';
 import { AskSheet } from '../../../src/components/AskSheet';
 import { TasksSheet } from '../../../src/components/TasksSheet';
+import { BtwCards } from '../../../src/components/BtwCards';
 import { FilesSheet } from '../../../src/components/FilesSheet';
 import { ModelPicker } from '../../../src/components/ModelPicker';
 import { OfflineBanner } from '../../../src/components/OfflineBanner';
@@ -166,12 +167,15 @@ function SessionScreen({ workerId, sessionId }: { workerId: string; sessionId: s
           />
         </View>
         <QueueCards workerId={workerId} sessionId={sessionId} draft={text} onEdit={onText} />
+        <BtwCards workerId={workerId} sessionId={sessionId} items={timeline?.btw ?? []} />
         <Composer
           value={text}
           onChange={onText}
           running={running}
           disabled={offline}
           onSend={send}
+          onBtw={(q) => { engine.setDraft(workerId, sessionId, ''); void engine.btw(workerId, sessionId, q); }}
+          placeholder={running ? '排队发送；/btw 顺便问一句不打断' : '给 AI 发消息；/btw 顺便问一句'}
           onInterrupt={() => void engine.interrupt(workerId, sessionId).catch(fail('中断失败'))}
           model={session ? { label: modelLabel(session.model, info?.models), onPress: () => setModelOpen(true) } : null}
           thinking={session ? { label: `思考 ${session.thinking}`, icon: 'bulb', onPress: pickThinking } : null}

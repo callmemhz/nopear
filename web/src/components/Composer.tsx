@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { sessionKey, type Attachment } from '@nopear/protocol';
+import { parseBtw, sessionKey, type Attachment } from '@nopear/protocol';
 import { engine, useEngine } from '../engine';
 import { attachmentBytes } from '../lib/compress';
 import { formatBytes } from '../lib/format';
@@ -92,6 +92,13 @@ export function Composer({ workerId, sessionId, running, disabled, toolbar }: {
     if (disabled) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
+    const btw = parseBtw(text);
+    if (btw !== null) { // side question: answered next to the session, never sent into it (attachments stay for later)
+      if (!btw) return;
+      engine.setDraft(workerId, sessionId, '');
+      void engine.btw(workerId, sessionId, btw);
+      return;
+    }
     const opts: { attachments?: Attachment[]; delivery?: 'followUp' | 'steer' } = {};
     if (attachments.length) opts.attachments = attachments;
     if (running) opts.delivery = steer ? 'steer' : 'followUp';
@@ -116,7 +123,7 @@ export function Composer({ workerId, sessionId, running, disabled, toolbar }: {
           value={draft}
           disabled={disabled}
           aria-label="消息"
-          placeholder={disabled ? '机器离线' : running ? `运行中 —— Enter 排队发送，${mod}+Enter 插队（Shift+Enter 换行）` : '发消息（Enter 发送，Shift+Enter 换行）'}
+          placeholder={disabled ? '机器离线' : running ? `运行中 —— Enter 排队发送，${mod}+Enter 插队；/btw 顺便问一句不打断` : '发消息（Enter 发送，Shift+Enter 换行；/btw 顺便问一句）'}
           onChange={(e) => engine.setDraft(workerId, sessionId, e.target.value)}
           onPaste={attach.onPaste}
           onKeyDown={(e) => {

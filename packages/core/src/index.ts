@@ -9,7 +9,7 @@ export { createSseParser, readSse, type SseMessage } from './sse';
 export { SaasClient, SaasError } from './saas';
 export { RpcCallError, WorkerChannel } from './channel';
 export {
-  emptyTimeline, applySessionEvent, addOptimistic, markSendFailed, markSent, markSending, dropPending, dropQueued, prependPage, selectMessages,
+  emptyTimeline, applySessionEvent, upsertBtw, dismissBtw, addOptimistic, markSendFailed, markSent, markSending, dropPending, dropQueued, prependPage, selectMessages,
   type PendingSend, type TimelineState, type ViewItem,
 } from './timeline';
 export { editNeedsConfirm, queueActions, queueBadge, queueErrorText, queuePreview, type QueueAction } from './queue';

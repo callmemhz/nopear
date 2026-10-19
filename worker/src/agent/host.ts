@@ -14,7 +14,8 @@ import {
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai';
 import {
   PAGE_DEFAULT, PAGE_MAX, SNAPSHOT_PAGE, TOOL_PROGRESS_MAX_CHARS,
-  DEFAULT_AUTO_COMPACT, normalizeAutoCompact,
+  DEFAULT_AUTO_COMPACT, normalizeAutoCompact, BTW_MAX_CHARS,
+  type BtwAnswer,
   type AutoCompactSettings, type Block, type Message, type Prompt, type QueueDelivery, type QueueItem, type RpcArgs, type RpcResult, type Session, type SessionEvent,
   type SessionKind, type WorkerInfo,
 } from '@nopear/protocol';
@@ -35,6 +36,16 @@ import { readRunStatus, subagentRunsDir, TaskTracker, taskState } from './tasks'
 
 /** Auto title: output budget (room for a reasoning model's thinking) and attempts per loaded session. */
 export const AUTO_TITLE_MAX_TOKENS = 1024;
+/** `/btw`: answer budget, patience, how often partial text is pushed, questions in flight per session. */
+const BTW_MAX_TOKENS = 8192;
+const BTW_TIMEOUT_MS = 10 * 60_000;
+const BTW_FLUSH_MS = 300;
+const BTW_MAX_CONCURRENT = 3;
+export function btwPrompt(question: string): string {
+  return '<system-reminder>The user is asking a quick side question (/btw) while the main task continues separately. '
+    + 'Answer it directly and concisely from what is already in this conversation. Do not call any tools: they will not run. '
+    + 'This exchange is not saved to the conversation.</system-reminder>\n\n' + question;
+}
 export const AUTO_TITLE_TRIES = 3;
 /** Background only, so be patient: a slow provider took over a minute for these few tokens. */
 export const AUTO_TITLE_TIMEOUT_MS = 120_000;
@@ -111,6 +122,8 @@ interface Live {
   /** An automatic title was already attempted for this Live (success or failure): never retried in a loop. */
   /** Auto-title attempts so far in this Live (a failed one is retried after a later run, up to AUTO_TITLE_TRIES). */
   titleTries?: number;
+  /** `/btw` side questions being answered (keeps the Live from idle-dispose). */
+  btw: Set<string>;
   titleBusy?: boolean;
   chain: Promise<void>;
   idleWaiters: Array<() => void>;
@@ -640,6 +653,78 @@ export class SessionHost {
   }
 
   /**
+   * `/btw`: answer a side question from the session's current context without touching the session. The request
+   * reuses the session's exact system prompt, tools, thinking level and history, so the provider's prompt cache
+   * covers the whole prefix; tools stay declared (dropping them, or tool_choice=none, would invalidate that cache)
+   * but the model is told they will not run, and any tool call it makes is ignored. Answers stream as `btw` events.
+   */
+  async btw(args: RpcArgs<'messages.btw'>): Promise<RpcResult<'messages.btw'>> {
+    const id = typeof args.id === 'string' ? args.id : '';
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new OpError('bad_request', 'id is required');
+    const question = typeof args.text === 'string' ? args.text.trim() : '';
+    if (!question) throw new OpError('bad_request', 'question is empty');
+    if (question.length > BTW_MAX_CHARS) throw new OpError('too_large', `question exceeds ${BTW_MAX_CHARS} chars`);
+    const live = await this.ensureLive(args.sessionId);
+    const model = live.session.model as Model<Api> | undefined;
+    if (!model) throw new OpError('bad_request', 'this session has no model');
+    if (live.btw.has(id)) return {};
+    if (live.btw.size >= BTW_MAX_CONCURRENT) throw new OpError('conflict', `at most ${BTW_MAX_CONCURRENT} /btw questions at a time`);
+    live.btw.add(id);
+    const entry: BtwAnswer = { id, question, text: '', status: 'running', model: `${model.provider}/${model.id}`, ts: nowIso() };
+    this.emitBtw(live, entry);
+    void this.runBtw(live, entry, model);
+    return {};
+  }
+
+  private emitBtw(live: Live, entry: BtwAnswer): void {
+    const snap = { ...entry };
+    this.enqueue(live, async () => ({ type: 'btw', btw: snap }), 'btw');
+  }
+
+  private async runBtw(live: Live, entry: BtwAnswer, model: Model<Api>): Promise<void> {
+    let sent = '';
+    let lastAt = 0;
+    const flush = () => {
+      if (entry.text === sent || Date.now() - lastAt < BTW_FLUSH_MS) return;
+      sent = entry.text; lastAt = Date.now();
+      this.emitBtw(live, entry);
+    };
+    try {
+      const agent = live.session.agent;
+      const state = agent.state;
+      const transformed = agent.transformContext ? await agent.transformContext([...state.messages]) : state.messages;
+      const history = await agent.convertToLlm(transformed);
+      const level = live.session.thinkingLevel;
+      const stream = this.deps.models.streamSimple(model, {
+        systemPrompt: state.systemPrompt,
+        messages: [...history, { role: 'user', content: [{ type: 'text', text: btwPrompt(entry.question) }], timestamp: Date.now() }],
+        tools: state.tools,
+      }, {
+        maxTokens: BTW_MAX_TOKENS,
+        ...(model.reasoning && level && level !== 'off' ? { reasoning: level } : {}),
+        ...(agent.sessionId ? { sessionId: agent.sessionId } : {}),
+        signal: AbortSignal.timeout(BTW_TIMEOUT_MS),
+      });
+      let triedTools = false;
+      for await (const ev of stream) {
+        if (ev.type === 'text_delta' || ev.type === 'text_end') { entry.text = userText(ev.partial.content); flush(); }
+        else if (ev.type === 'toolcall_start') triedTools = true;
+        else if (ev.type === 'done') entry.text = userText(ev.message.content);
+        else if (ev.type === 'error') throw new Error(ev.error.errorMessage || ev.reason);
+      }
+      if (!entry.text.trim()) entry.text = triedTools ? '（它想调用工具来回答；/btw 不执行工具，需要的话把这个问题作为普通消息发给它。）' : '（没有回答）';
+      entry.status = 'done';
+    } catch (err) {
+      entry.status = 'error';
+      entry.error = String((err as Error)?.message ?? err).slice(0, 600);
+    } finally {
+      live.btw.delete(entry.id);
+      this.emitBtw(live, entry); // always: the status changed even when the text did not
+      this.scheduleIdle(live);
+    }
+  }
+
+  /**
    * Read-only conversation of a background run (or one step of it): the child's own pi session file, which
    * pi-subagents keeps under this session's directory. Anything outside that directory is refused, so a client
    * can only read the subagents of a session it can already read.
@@ -990,7 +1075,8 @@ export class SessionHost {
     live = { meta, sm, session, bus, tracker, watchers: new Set(), asks: new Map(), pendingSends: [], queue: [], queueRebuilding: false,
       liveMsg: null, pubMsg: null, liveSeq: 0,
       log: new SyncLog(newEpoch()), sendChain: Promise.resolve(), cache: new Map(), enders: new Set(), disposed: false, lastUse: Date.now(),
-      running: false, lastError: undefined, chain: Promise.resolve(), idleWaiters: [], progressAt: new Map(), idleTimer: null, unsub: () => {} };
+      running: false, lastError: undefined, chain: Promise.resolve(), idleWaiters: [], progressAt: new Map(), idleTimer: null, unsub: () => {},
+      btw: new Set() };
     this.hookPersistence(live);
     live.unsub = session.subscribe((e) => this.onEvent(live, e as unknown as { type: string; [k: string]: unknown }));
     this.live.set(meta.id, live);
@@ -1194,7 +1280,7 @@ export class SessionHost {
 
   private isIdle(live: Live): boolean {
     return !this.closed && !live.disposed && live.watchers.size === 0 && !live.running && !live.session.isStreaming
-      && live.asks.size === 0 && live.tracker.active().length === 0;
+      && live.asks.size === 0 && live.tracker.active().length === 0 && live.btw.size === 0;
   }
 
   private scheduleIdle(live: Live, delay = this.cfg.idleDisposeMs): void {

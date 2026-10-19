@@ -250,6 +250,22 @@ async function main(): Promise<void> {
   check(w2.events.every((e) => e.type !== 'snapshot'), 'no snapshot in the resumed stream');
   step('watch resumed from cursor: replay (no snapshot) includes the "again" user upsert');
 
+  // 5b. /btw: a side question on a running session streams back as `btw` events and leaves the session as it was
+  {
+    const { session: bs } = await ch.rpc('sessions.create', { text: 'slow: main task', clientMsgId: randomId(), cwd: work });
+    const wb = new Watch(ch, bs.id);
+    await wb.until('btw snapshot', (evs) => evs.length > 0);
+    await ch.rpc('messages.btw', { sessionId: bs.id, id: 'e2e-btw-1', text: 'what is going on?' });
+    const answered = await wb.until('btw answer', (evs) => findEv(evs, 'btw', (e) => e.btw.id === 'e2e-btw-1' && e.btw.status !== 'running'));
+    check(answered.btw.status === 'done' && answered.btw.text.includes('what is going on?'), `btw answered (got ${JSON.stringify(answered.btw)})`);
+    check(wb.events.some((e) => e.type === 'btw' && e.btw.status === 'running'), 'btw announced as running first');
+    await wb.until('btw session idle', idleAfter(0));
+    const page = await ch.rpc('messages.page', { sessionId: bs.id });
+    check(!page.messages.some((m) => textOf(m).includes('what is going on?')), 'the /btw exchange is not in the session');
+    await wb.stop();
+    step('/btw on a running session: running → done over the watch stream, nothing written to the session');
+  }
+
   // 5a. message queue: sends while running are queued and visible; switch one to steer, cancel the other
   {
     const { session: qs } = await ch.rpc('sessions.create', { text: 'slow: queue run', clientMsgId: randomId(), cwd: work });

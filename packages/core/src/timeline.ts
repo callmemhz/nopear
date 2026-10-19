@@ -1,5 +1,5 @@
 // Pure reducer for one session's timeline.
-import type { Attachment, BackgroundTask, Block, FileBlock, Message, Prompt, QueueItem, Session, SessionEvent } from '@nopear/protocol';
+import type { Attachment, BackgroundTask, Block, BtwAnswer, FileBlock, Message, Prompt, QueueItem, Session, SessionEvent } from '@nopear/protocol';
 
 export interface PendingSend {
   clientMsgId: string;
@@ -17,6 +17,10 @@ export interface TimelineState {
   tasks: BackgroundTask[];
   /** Messages queued by the worker while the session runs, in delivery order. */
   queue: QueueItem[];
+  /** `/btw` side answers (newest last). Never part of the session, so not restored with it. */
+  btw: BtwAnswer[];
+  /** Ids the user closed: later events for them (an answer still streaming) are ignored. */
+  btwHidden?: string[];
   progress: Record<string, string>;
   pending: Record<string, PendingSend>;
 }
@@ -27,7 +31,7 @@ const isLocal = (m: Message) => m.id.startsWith(LOCAL);
 const textOf = (m: Message) => m.blocks.map((b) => (b.type === 'text' ? b.text : '')).join('');
 
 export function emptyTimeline(): TimelineState {
-  return { messages: [], hasMore: true, prompts: [], tasks: [], queue: [], progress: {}, pending: {} };
+  return { messages: [], hasMore: true, prompts: [], tasks: [], queue: [], btw: [], progress: {}, pending: {} };
 }
 
 function withoutPending(s: TimelineState, ids: string[]): TimelineState {
@@ -117,6 +121,15 @@ function withQueue(s: TimelineState, queue: QueueItem[]): TimelineState {
   return { ...withoutPending(s, left), queue };
 }
 
+export function upsertBtw(s: TimelineState, b: BtwAnswer): TimelineState {
+  if (s.btwHidden?.includes(b.id)) return s;
+  const cur = s.btw ?? [];
+  return { ...s, btw: cur.some((x) => x.id === b.id) ? cur.map((x) => (x.id === b.id ? b : x)) : [...cur, b] };
+}
+export function dismissBtw(s: TimelineState, id: string): TimelineState {
+  return { ...s, btw: (s.btw ?? []).filter((x) => x.id !== id), btwHidden: [...(s.btwHidden ?? []).slice(-50), id] };
+}
+
 export function applySessionEvent(s: TimelineState, e: SessionEvent): TimelineState {
   let n: TimelineState;
   switch (e.type) {
@@ -134,6 +147,7 @@ export function applySessionEvent(s: TimelineState, e: SessionEvent): TimelineSt
     case 'tasks': n = { ...s, tasks: e.tasks }; break;
     case 'queue': n = withQueue(s, e.items); break;
     case 'tool.progress': n = { ...s, progress: { ...s.progress, [e.toolCallId]: e.text } }; break;
+    case 'btw': n = upsertBtw(s, e.btw); break;
     default: n = s;
   }
   return { ...n, cursor: e.cursor };

@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Attachment } from '@nopear/protocol';
+import { parseBtw, type Attachment } from '@nopear/protocol';
 import { exceedsTotal, pickImageAttachments } from '../compress';
 import { COLUMN_MAX, usePalette } from '../theme';
 import { Icon, type IconName } from './Icon';
@@ -28,6 +28,8 @@ export function Composer(props: {
   value: string; onChange: (t: string) => void; running: boolean; disabled?: boolean;
   onSend: (text: string, attachments: Attachment[], delivery: 'followUp' | 'steer') => Promise<void> | void;
   onInterrupt: () => void; placeholder?: string;
+  /** `/btw question` goes here instead of onSend (attachments stay in the composer). */
+  onBtw?: (question: string) => void;
   model?: ComposerChip | null; thinking?: ComposerChip | null;
   /** e.g. creating the session: the send button shows a spinner. */
   busy?: boolean;
@@ -61,6 +63,11 @@ export function Composer(props: {
   const send = async (steer = false) => {
     if (!canSend) return;
     const text = props.value.trim();
+    const btw = props.onBtw ? parseBtw(text) : null;
+    if (btw !== null) {
+      if (btw) { props.onChange(''); props.onBtw!(btw); }
+      return;
+    }
     const atts = attachments;
     props.onChange('');
     setAttachments([]);

@@ -55,6 +55,21 @@ describe('Composer', () => {
     await key({ ctrlKey: true });
     expect(send).toHaveBeenLastCalledWith('w1', 's1', 'ctrl', { delivery: 'steer' });
   });
+  it('/btw asks a side question instead of sending (idle or running); a bare /btw does nothing', async () => {
+    const send = vi.spyOn(engine, 'send').mockResolvedValue();
+    const btw = vi.spyOn(engine, 'btw').mockResolvedValue();
+    await act(async () => { root.render(<Composer workerId="w1" sessionId="s1" running />); });
+    await act(async () => { engine.setDraft('w1', 's1', '/btw  这个函数是干嘛的？ '); });
+    await act(async () => { btn('发送（排队）')!.click(); });
+    expect(btw).toHaveBeenCalledWith('w1', 's1', '这个函数是干嘛的？');
+    expect(send).not.toHaveBeenCalled();
+    expect(engine.store.getState().drafts['w1/s1'] ?? '').toBe('');
+    await act(async () => { engine.setDraft('w1', 's1', '/btw'); });
+    await act(async () => { btn('发送（排队）')!.click(); });
+    expect(btw).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(engine.store.getState().drafts['w1/s1']).toBe('/btw');
+  });
   it('when idle ⌘+Enter is a plain send (no delivery)', async () => {
     const send = vi.spyOn(engine, 'send').mockResolvedValue();
     await act(async () => { root.render(<Composer workerId="w1" sessionId="s1" running={false} />); });

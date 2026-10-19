@@ -37,6 +37,7 @@ export function createOps(deps: OpsDeps): { ops: OpHandlers; watches: WatchHandl
     'messages.queue.remove': async (a) => { await host.queueRemove(a); return {}; },
     'messages.queue.update': async (a) => { await host.queueUpdate(a); return {}; },
     'prompts.answer': async (a) => { await host.answerPrompt(a); return {}; },
+    'messages.btw': async (a) => host.btw(a),
     'tasks.stop': async (a) => { await host.stopTask(a.sessionId, a.taskId); return {}; },
     'tasks.transcript': async (a) => host.taskTranscript(a),
 

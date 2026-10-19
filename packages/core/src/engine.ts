@@ -13,7 +13,7 @@ import type { KV, Platform } from './platform';
 import { SaasClient, SaasError } from './saas';
 import { RpcCallError, WorkerChannel } from './channel';
 import {
-  addOptimistic, applySessionEvent, dropPending, dropQueued, emptyTimeline, markSendFailed, markSending, markSent, prependPage,
+  addOptimistic, applySessionEvent, dismissBtw, dropPending, dropQueued, emptyTimeline, markSendFailed, markSending, markSent, prependPage, upsertBtw,
   type TimelineState,
 } from './timeline';
 
@@ -52,6 +52,9 @@ export interface NoPearEngine {
   loadEarlier(workerId: string, sessionId: string): Promise<void>;
   createSession(workerId: string, args: Omit<RpcArgs<'sessions.create'>, 'clientMsgId'>): Promise<Session>;
   send(workerId: string, sessionId: string, text: string, opts?: { attachments?: Attachment[]; delivery?: 'followUp' | 'steer' }): Promise<void>;
+  /** `/btw`: ask a side question; the answer appears in `timeline.btw` (never in the session). Errors land on the entry. */
+  btw(workerId: string, sessionId: string, question: string): Promise<void>;
+  dismissBtw(workerId: string, sessionId: string, id: string): void;
   retrySend(workerId: string, sessionId: string, clientMsgId: string): Promise<void>;
   discardSend(workerId: string, sessionId: string, clientMsgId: string): string;
   /** Cancel a queued message; rejects with not_found once it was delivered. */
@@ -1005,6 +1008,22 @@ export function createNoPearEngine(opts: {
       upsertSession(workerId, session);
       return session;
     },
+    async btw(workerId, sessionId, question) {
+      const key = sessionKey(workerId, sessionId);
+      const id = randomId();
+      const ts = new Date(platform.now?.() ?? Date.now()).toISOString();
+      updateTimeline(key, (t) => upsertBtw(t, { id, question, text: '', status: 'running', ts }));
+      try {
+        await rpc(workerId, 'messages.btw', { sessionId, id, text: question });
+      } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        updateTimeline(key, (t) => {
+          const cur = (t.btw ?? []).find((b) => b.id === id);
+          return cur && cur.status === 'running' && !cur.text ? upsertBtw(t, { ...cur, status: 'error', error }) : t;
+        });
+      }
+    },
+    dismissBtw(workerId, sessionId, id) { updateTimeline(sessionKey(workerId, sessionId), (t) => dismissBtw(t, id)); },
     async send(workerId, sessionId, text, o = {}) {
       const clientMsgId = randomId();
       const p: { clientMsgId: string; text: string; ts: string; attachments?: Attachment[] } = { clientMsgId, text, ts: new Date(platform.now?.() ?? Date.now()).toISOString() };

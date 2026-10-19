@@ -120,6 +120,26 @@ export interface AskOption { label: string; description?: string }
 export interface AskQuestion { question: string; header: string; multiSelect: boolean; options: AskOption[] }
 export interface Prompt { id: string; sessionId: string; questions: AskQuestion[]; createdAt: string }
 
+/**
+ * `/btw <question>`: a side question answered from the session's current context while it keeps working. No tools,
+ * nothing written to the session (it never enters the history); the answer streams back as `btw` session events.
+ */
+export type BtwStatus = 'running' | 'done' | 'error';
+export interface BtwAnswer {
+  /** Client-generated; repeated `btw` events with the same id carry the whole answer so far. */
+  id: string;
+  question: string; text: string; status: BtwStatus; error?: string;
+  /** provider/modelId that answered. */
+  model?: string;
+  ts: string;
+}
+export const BTW_MAX_CHARS = 4000;
+/** `/btw question` → `question`; anything else → null. */
+export function parseBtw(text: string): string | null {
+  const m = /^\/btw(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return m ? (m[1] ?? '').trim() : null;
+}
+
 /** queued/running/paused = active (can be stopped); the rest = finished, kept briefly so its transcript stays reachable. */
 export type TaskState = 'queued' | 'running' | 'paused' | 'complete' | 'failed' | 'stopped';
 export const ACTIVE_TASK_STATES: readonly TaskState[] = ['queued', 'running', 'paused'];
@@ -446,6 +466,8 @@ export interface RpcCatalog {
   /** Edit a queued message's text and/or switch followUp ↔ steer (a switched item moves to the end of its new queue). */
   'messages.queue.update': { args: SessionRef & { id: string; text?: string; delivery?: QueueDelivery }; result: Empty };
   'prompts.answer': { args: SessionRef & { promptId: string; answers: Record<string, string>; note?: string }; result: Empty };
+  /** Ask a `/btw` side question (see BtwAnswer); returns once accepted, the answer arrives as `btw` events. */
+  'messages.btw': { args: SessionRef & { id: string; text: string }; result: Empty };
   'tasks.stop': { args: SessionRef & { taskId: string }; result: Empty };
   /**
    * Read-only conversation of a background run (or one of its steps), from `BackgroundTask.transcript` /
@@ -485,7 +507,8 @@ export type SessionEvent =
   | { type: 'prompt.closed'; cursor: string; promptId: string; reason: 'answered' | 'cancelled' | 'timeout' }
   | { type: 'tasks'; cursor: string; tasks: BackgroundTask[] }
   | { type: 'queue'; cursor: string; items: QueueItem[] }
-  | { type: 'tool.progress'; cursor: string; toolCallId: string; text: string };
+  | { type: 'tool.progress'; cursor: string; toolCallId: string; text: string }
+  | { type: 'btw'; cursor: string; btw: BtwAnswer };
 
 export type MachineEvent =
   | { type: 'snapshot'; worker: WorkerInfo; sessions: Session[] }

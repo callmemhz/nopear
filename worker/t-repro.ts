@@ -1,0 +1,25 @@
+import { SessionManager, buildSessionContext, convertToLlm } from '@earendil-works/pi-coding-agent';
+import { loadConfig } from './src/config.ts';
+import { createModelRuntime } from './src/agent/models.ts';
+import { rewriteSystemPrompt } from './src/agent/persona.ts';
+const cfg = loadConfig(process.env);
+const rt = await createModelRuntime(cfg);
+const model = rt.getModel('llmhub-infron', 'claude-opus-5-5')!;
+const file = process.argv[2]!;
+const sm = SessionManager.open(file, cfg.sessionsDir);
+const ctx = buildSessionContext(sm.getEntries(), sm.getLeafId());
+let msgs = convertToLlm(ctx.messages) as any[];
+// drop the trailing failed assistant turns / dangling user so the history ends cleanly
+while (msgs.length && (msgs.at(-1).role !== 'toolResult' && !(msgs.at(-1).role === 'assistant' && msgs.at(-1).stopReason !== 'error'))) msgs.pop();
+msgs = msgs.filter((m) => !(m.role === 'assistant' && m.stopReason === 'error'));
+const sys = rewriteSystemPrompt('You are an expert coding assistant operating inside pi, a coding agent harness.', 'Claude Code')!;
+const ask = { role: 'user', content: [{ type: 'text', text: 'Reply with just: OK' }], timestamp: Date.now() };
+const variant = process.argv[3] ?? 'as-is';
+if (variant === 'no-summary') msgs = msgs.slice(1);
+if (variant === 'cc-wording') msgs[0] = { ...msgs[0], content: [{ type: 'text', text: 'This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:\n' + (msgs[0].content[0].text as string).replace(/^[\s\S]*?<summary>\n/, '').replace(/\n<\/summary>$/, '') }] };
+if (variant === 'tail') msgs = msgs.slice(-6);
+const first = JSON.stringify(msgs[0]?.content).slice(0, 90);
+const t0 = Date.now();
+const res = await rt.completeSimple(model, { systemPrompt: sys, messages: [...msgs, ask] as any }, { maxTokens: 64, signal: AbortSignal.timeout(240_000) });
+const text = res.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+console.log(variant, 'msgs', msgs.length, Date.now() - t0, 'ms', res.stopReason, '|', text.slice(0, 40), '|', String(res.errorMessage ?? '').slice(0, 110), '| in', res.usage.input + res.usage.cacheRead + res.usage.cacheWrite, '| first:', first);
