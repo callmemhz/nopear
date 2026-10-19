@@ -645,6 +645,40 @@ test('auto title after the first reply; a client rename wins and is never overwr
   assert.deepEqual([meta.get(s2.id)!.title, meta.get(s2.id)!.titleSource], ['手动', 'user']);
 });
 
+test('auto title: a reply with no title (thinking used the budget, provider error) is retried after later runs, up to 3 tries', async () => {
+  const { host, meta } = await env();
+  const rt = await rtP;
+  const real = rt.completeSimple.bind(rt);
+  const calls: Array<Record<string, unknown>> = [];
+  const replies: Array<'thinking' | 'error' | 'ok'> = ['thinking', 'error', 'ok'];
+  const warn = console.warn; const warns: string[] = [];
+  console.warn = (...a: unknown[]) => { warns.push(a.join(' ')); };
+  (rt as { completeSimple: unknown }).completeSimple = async (model: never, ctx: never, opts: Record<string, unknown>) => {
+    calls.push(opts);
+    const r = { role: 'assistant', api: 'faux', provider: 'faux', model: 'echo', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'stop', timestamp: Date.now(), content: [] };
+    const kind = replies.shift() ?? 'ok';
+    if (kind === 'thinking') return { ...r, stopReason: 'length', content: [{ type: 'thinking', thinking: 'hmm…' }] };
+    if (kind === 'error') return { ...r, stopReason: 'error', errorMessage: '400 quota', content: [] };
+    return { ...r, content: [{ type: 'text', text: '「整理发布流程」' }] };
+  };
+  try {
+    const sid = await idleSession(host, 'tidy the publish flow');
+    const until = async (n: number) => { const t0 = Date.now(); while (calls.length < n) { if (Date.now() - t0 > 5000) throw new Error(`timeout at ${calls.length}`); await sleep(20); } await sleep(50); };
+    await until(1);
+    assert.equal(meta.get(sid)!.titleSource, 'prompt');
+    assert.ok(warns.some((w) => /no title .*try 1\/3.*length/.test(w)), warns.join('\n'));
+    assert.ok((calls[0]!.maxTokens as number) >= 512, 'room for thinking');
+    for (const n of [2, 3]) { await host.send({ sessionId: sid, text: `run ${n}`, clientMsgId: `r${n}` }); await host.waitIdle(sid); await until(n); }
+    assert.ok(warns.some((w) => /try 2\/3\): error 400 quota/.test(w)), warns.join('\n'));
+    assert.deepEqual([meta.get(sid)!.title, meta.get(sid)!.titleSource], ['整理发布流程', 'auto']);
+    await host.send({ sessionId: sid, text: 'run 4', clientMsgId: 'r4' }); await host.waitIdle(sid); await sleep(100);
+    assert.equal(calls.length, 3, 'titled: no more attempts');
+  } finally {
+    (rt as { completeSimple: unknown }).completeSimple = real;
+    console.warn = warn;
+  }
+});
+
 test('NOPEAR_AUTO_TITLE=0 keeps the first-prompt title', async () => {
   const { host, meta } = await env({ autoTitle: false });
   const sid = await idleSession(host, 'keep me');

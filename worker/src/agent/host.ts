@@ -33,6 +33,11 @@ import { SESSION_RENAME_TOOL, AUTO_TITLE_SYSTEM, autoTitlePrompt, canRetitle, cl
 import { newEpoch, SyncLog, type Uncursored } from './synclog';
 import { readRunStatus, subagentRunsDir, TaskTracker, taskState } from './tasks';
 
+/** Auto title: output budget (room for a reasoning model's thinking) and attempts per loaded session. */
+export const AUTO_TITLE_MAX_TOKENS = 1024;
+export const AUTO_TITLE_TRIES = 3;
+/** Background only, so be patient: a slow provider took over a minute for these few tokens. */
+export const AUTO_TITLE_TIMEOUT_MS = 120_000;
 /** tasks.transcript: newest messages returned by default / at most. */
 const TRANSCRIPT_PAGE = 200;
 const TRANSCRIPT_MAX = 1000;
@@ -104,7 +109,9 @@ interface Live {
   /** Error text of the last run when it ended with stopReason 'error'; undefined otherwise. */
   lastError: string | undefined;
   /** An automatic title was already attempted for this Live (success or failure): never retried in a loop. */
-  titleTried?: boolean;
+  /** Auto-title attempts so far in this Live (a failed one is retried after a later run, up to AUTO_TITLE_TRIES). */
+  titleTries?: number;
+  titleBusy?: boolean;
   chain: Promise<void>;
   idleWaiters: Array<() => void>;
   progressAt: Map<string, number>;
@@ -786,26 +793,35 @@ export class SessionHost {
 
   /** After a completed run: give a session still titled by its first prompt a short model-written title (once per Live). */
   private async maybeAutoTitle(live: Live): Promise<void> {
-    if (!this.cfg.autoTitle || live.titleTried || live.disposed || live.lastError) return;
+    if (!this.cfg.autoTitle || live.titleBusy || (live.titleTries ?? 0) >= AUTO_TITLE_TRIES || live.disposed || live.lastError) return;
     if (!wantsAutoTitle(this.deps.meta.get(live.meta.id)?.titleSource)) return;
     const msgs = (live.sm.getBranch() as Entry[]).filter((e) => e.type === 'message').map((e) => e.message!);
     const firstUser = userText(msgs.find((m) => m.role === 'user')?.content);
     const firstReply = msgs.filter((m) => m.role === 'assistant').map((m) => userText(m.content)).find((t) => t.trim()) ?? '';
     if (!firstUser.trim() || !firstReply.trim()) return; // nothing to name yet (e.g. only tool calls so far)
-    live.titleTried = true;
     const model = live.session.model as Model<Api> | undefined;
     if (!model) return;
+    live.titleTries = (live.titleTries ?? 0) + 1;
+    live.titleBusy = true;
     try {
+      // Reasoning models may think before answering (some always do); the lowest level keeps that short, and the
+      // token cap leaves room for it — with a tight cap the thinking used it all and no title came back.
       const res = await this.deps.models.completeSimple(model, {
         systemPrompt: AUTO_TITLE_SYSTEM,
         messages: [{ role: 'user', content: autoTitlePrompt(firstUser, firstReply), timestamp: Date.now() }],
-      }, { maxTokens: 64, signal: AbortSignal.timeout(30_000) });
-      const title = cleanTitle(userText(res.content));
-      if (!title || res.stopReason === 'error') return;
+      }, { maxTokens: AUTO_TITLE_MAX_TOKENS, ...(model.reasoning ? { reasoning: 'minimal' as const } : {}), signal: AbortSignal.timeout(AUTO_TITLE_TIMEOUT_MS) });
+      const title = res.stopReason === 'error' ? '' : cleanTitle(userText(res.content));
+      if (!title) {
+        console.warn(`[nopear] auto title: no title from ${model.provider}/${model.id} (${live.meta.id}, try ${live.titleTries}/${AUTO_TITLE_TRIES}): ${res.stopReason}${res.errorMessage ? ` ${res.errorMessage.slice(0, 200)}` : ''}`);
+        return;
+      }
+      live.titleTries = AUTO_TITLE_TRIES; // done
       // Re-check: the user (or the agent) may have renamed it while the title was being generated.
       if (wantsAutoTitle(this.deps.meta.get(live.meta.id)?.titleSource)) await this.retitle(live.meta.id, title, 'auto');
     } catch (err) {
-      console.warn(`[nopear] auto title failed (${live.meta.id}): ${(err as Error)?.message ?? err}`);
+      console.warn(`[nopear] auto title failed (${live.meta.id}, try ${live.titleTries}/${AUTO_TITLE_TRIES}): ${(err as Error)?.message ?? err}`);
+    } finally {
+      live.titleBusy = false;
     }
   }
 
