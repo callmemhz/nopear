@@ -25,7 +25,7 @@ import type { BlobStore } from './blobs';
 import { assistantBlocks, entryToMessage, previewOf } from './mapping';
 import type { MetaStore, SessionMeta } from './meta-store';
 import { listModels, modelKey, resolveModel } from './models';
-import { appendOnce, rewriteSystemPrompt } from './persona';
+import { appendOnce, IN_PROCESS_FLAG, installPersonaExtension, rewriteSystemPrompt } from './persona';
 import { compactionOverrides } from './compaction';
 import { normalizeImageBlocks } from './image-normalize';
 import { SESSION_RENAME_TOOL, AUTO_TITLE_SYSTEM, autoTitlePrompt, canRetitle, cleanTitle, createSessionRenameTool, wantsAutoTitle, type TitleSource } from './titles';
@@ -182,6 +182,9 @@ export class SessionHost {
     for (const k of Object.keys(process.env)) if (k.startsWith('PI_SUBAGENT_')) delete process.env[k];
     for (const d of [this.cfg.home, this.cfg.agentDir, this.cfg.sessionsDir, this.cfg.blobsDir]) ensurePrivateDir(d);
     ensureAgentDirCredentials(this.cfg);
+    // Our own sessions are rewritten below (build); the extension is for the separate `pi` processes subagents run in.
+    (globalThis as Record<string, unknown>)[IN_PROCESS_FLAG] = true;
+    installPersonaExtension(this.cfg.agentDir, this.cfg.persona);
     const onPath = (process.env.PATH ?? '').split(delimiter).some((d) => d && existsSync(join(d, 'pi')));
     if (!onPath) console.warn('[nopear] `pi` CLI not found on PATH — background subagent tasks will be unavailable');
     if (!PI_SUBAGENTS_ENTRY) console.warn('[nopear] pi-subagents not resolvable — background tasks disabled');
