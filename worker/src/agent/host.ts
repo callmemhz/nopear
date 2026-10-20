@@ -455,6 +455,23 @@ export class SessionHost {
     this.queueChanged(live);
   }
 
+  /**
+   * pi removes a delivered queued message from its steer/followUp list by matching the text, and skips messages
+   * with no text at all (`if (messageText)` in agent-session.js) — so an attachments-only message, once delivered,
+   * stayed listed (and mirrored here as still queued) forever. Do the removal pi skipped, in its own order
+   * (steer first). Returns true when the mirror changed.
+   */
+  private dropDeliveredEmptyQueued(live: Live, content: unknown): boolean {
+    if (userText(content).trim() !== '' || !Array.isArray(content) || content.length === 0) return false;
+    for (const list of [live.session.getSteeringMessages(), live.session.getFollowUpMessages()] as string[][]) {
+      const i = list.indexOf('');
+      if (i < 0) continue;
+      list.splice(i, 1); // pi hands out its live array
+      return this.syncQueue(live);
+    }
+    return false;
+  }
+
   /** Drop mirrored entries pi no longer holds (delivered: pi removes the first matching text at message_start).
    *  Returns true when something was dropped. */
   private syncQueue(live: Live): boolean {
@@ -1157,7 +1174,8 @@ export class SessionHost {
         this.settleIfIdle(live);
         break;
       case 'message_start': {
-        const m = e.message as { role?: string } | undefined;
+        const m = e.message as { role?: string; content?: unknown } | undefined;
+        if (m?.role === 'user' && this.dropDeliveredEmptyQueued(live, m.content)) this.queueChanged(live);
         if (m?.role !== 'assistant') break;
         live.liveMsg = { id: `live:${++live.liveSeq}`, sessionId: id, role: 'assistant', blocks: [], ts: nowIso(), status: 'streaming' };
         const snap = structuredClone(live.liveMsg);

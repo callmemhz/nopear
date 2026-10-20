@@ -174,3 +174,23 @@ test('a steer send is queued as steer, ahead of earlier followUps', async () => 
   assert.deepEqual((await users(host, s.id)).map(textOf), ['slow: run', 'now', 'later']);
   await w.stop();
 });
+
+test('an attachments-only queued message (no text) leaves the queue once delivered, as steer and as followUp', async () => {
+  for (const delivery of ['steer', 'followUp'] as const) {
+    const host = await makeHost();
+    const s = await host.create({ text: 'slow: run', clientMsgId: 'c0' });
+    const w = new Watcher(host, s.id);
+    await w.until((e) => e.length > 0);
+    const img = { kind: 'image' as const, name: 'p.png', mediaType: 'image/png', dataBase64: PNG };
+    assert.deepEqual(await host.send({ sessionId: s.id, text: '', clientMsgId: 'a1', attachments: [img], delivery }), { queued: true });
+    await w.until(() => w.queue.length === 1);
+    assert.deepEqual(ids(w.queue), [`a1:${delivery}`]);
+    await host.waitIdle(s.id);
+    await w.until(() => w.queue.length === 0); // pi skips text-less messages when clearing its queue: this hung
+    const u = (await users(host, s.id)).at(-1)!;
+    assert.equal(u.clientMsgId, 'a1');
+    assert.ok(u.blocks.some((b) => b.type === 'image'));
+    assert.deepEqual(host.get(s.id).status, 'idle');
+    await w.stop();
+  }
+});
