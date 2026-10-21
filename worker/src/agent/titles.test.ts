@@ -20,3 +20,9 @@ test('title precedence: user > agent > auto > prompt; only first-prompt titles g
   assert.ok(wantsAutoTitle(undefined) && wantsAutoTitle('prompt'));
   assert.ok(!wantsAutoTitle('auto') && !wantsAutoTitle('user'));
 });
+
+test('autoTitlePrompt: with a reply both sides; without one (failed run / tools only) the request alone', async () => {
+  const { autoTitlePrompt } = await import('./titles');
+  assert.equal(autoTitlePrompt(' fix login ', ' sure '), 'User:\nfix login\n\nAssistant:\nsure\n\nTitle:');
+  assert.equal(autoTitlePrompt('fix login', '  '), 'User:\nfix login\n\nTitle:');
+});

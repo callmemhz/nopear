@@ -679,6 +679,36 @@ test('auto title: a reply with no title (thinking used the budget, provider erro
   }
 });
 
+test('auto title: a first run that fails (provider error, no reply) still names the session from the request', async () => {
+  const { host, meta } = await env();
+  const rt = await rtP;
+  const realStream = rt.streamSimple.bind(rt);
+  const realComplete = rt.completeSimple.bind(rt);
+  const prompts: string[] = [];
+  let failed = false;
+  (rt as { streamSimple: unknown }).streamSimple = (m: never, c: never, o: never) => {
+    if (failed) return realStream(m, c, o);
+    failed = true; // the session's first model call: a provider error
+    const error = { role: 'assistant', api: 'faux', provider: 'faux', model: 'echo', content: [], stopReason: 'error', errorMessage: '400 Third-party apps now draw from extra usage',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, timestamp: Date.now() };
+    return { async *[Symbol.asyncIterator]() { yield { type: 'error', reason: 'error', error }; }, result: async () => error };
+  };
+  (rt as { completeSimple: unknown }).completeSimple = async (m: never, ctx: { messages: Array<{ content: string }> }, o: never) => {
+    prompts.push(String(ctx.messages[0]!.content));
+    return realComplete(m, ctx as never, o);
+  };
+  try {
+    const sid = await idleSession(host, '修复登录页的验证码');
+    const t0 = Date.now();
+    while (meta.get(sid)?.titleSource !== 'auto') { if (Date.now() - t0 > 5000) throw new Error(`no title; prompts=${JSON.stringify(prompts)}`); await sleep(20); }
+    assert.equal(prompts.length, 1);
+    assert.ok(prompts[0]!.startsWith('User:\n修复登录页的验证码') && !prompts[0]!.includes('Assistant:'), prompts[0]);
+  } finally {
+    (rt as { streamSimple: unknown }).streamSimple = realStream;
+    (rt as { completeSimple: unknown }).completeSimple = realComplete;
+  }
+});
+
 test('NOPEAR_AUTO_TITLE=0 keeps the first-prompt title', async () => {
   const { host, meta } = await env({ autoTitle: false });
   const sid = await idleSession(host, 'keep me');

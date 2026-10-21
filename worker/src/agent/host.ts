@@ -895,12 +895,14 @@ export class SessionHost {
 
   /** After a completed run: give a session still titled by its first prompt a short model-written title (once per Live). */
   private async maybeAutoTitle(live: Live): Promise<void> {
-    if (!this.cfg.autoTitle || live.titleBusy || (live.titleTries ?? 0) >= AUTO_TITLE_TRIES || live.disposed || live.lastError) return;
+    // A failed run still gets a title (it is about the request, not the outcome); a failing model just means this
+    // try fails too, and the next run retries.
+    if (!this.cfg.autoTitle || live.titleBusy || (live.titleTries ?? 0) >= AUTO_TITLE_TRIES || live.disposed) return;
     if (!wantsAutoTitle(this.deps.meta.get(live.meta.id)?.titleSource)) return;
     const msgs = (live.sm.getBranch() as Entry[]).filter((e) => e.type === 'message').map((e) => e.message!);
     const firstUser = userText(msgs.find((m) => m.role === 'user')?.content);
     const firstReply = msgs.filter((m) => m.role === 'assistant').map((m) => userText(m.content)).find((t) => t.trim()) ?? '';
-    if (!firstUser.trim() || !firstReply.trim()) return; // nothing to name yet (e.g. only tool calls so far)
+    if (!firstUser.trim()) return; // nothing to name (e.g. an attachments-only first message)
     const model = live.session.model as Model<Api> | undefined;
     if (!model) return;
     live.titleTries = (live.titleTries ?? 0) + 1;

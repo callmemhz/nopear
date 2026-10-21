@@ -46,7 +46,9 @@ export const AUTO_TITLE_SYSTEM = [
 /** The single user turn sent to the title model: the opening exchange, both sides capped. */
 export function autoTitlePrompt(firstUser: string, firstReply: string): string {
   const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
-  return `User:\n${cap(firstUser.trim(), 1500)}\n\nAssistant:\n${cap(firstReply.trim(), 1500)}\n\nTitle:`;
+  const reply = firstReply.trim();
+  // No reply yet (the run failed, or only called tools): the request alone names the task well enough.
+  return `User:\n${cap(firstUser.trim(), 1500)}\n\n${reply ? `Assistant:\n${cap(reply, 1500)}\n\n` : ''}Title:`;
 }
 
 /** Agent tool: rename the current session. `rename` returns null when applied, or the reason it was refused. */
