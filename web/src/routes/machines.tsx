@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import type { InstallCodeResult } from '@nopear/protocol';
+import type { InstallCodeResult, Machine } from '@nopear/protocol';
+import { machineUpdateView, type UpdateTone } from '@nopear/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { engine, saasClient, useEngine } from '../engine';
 import { relativeTime } from '../lib/format';
@@ -34,6 +35,38 @@ function AddMachine({ onClose }: { onClose: () => void }) {
           </div>
           <p className="muted">安装码一次性有效，{new Date(result.expiresAt).toLocaleString('zh-CN')} 前可用。</p>
         </>
+      )}
+    </div>
+  );
+}
+
+const TONE: Record<UpdateTone, string> = {
+  ok: 'text-emerald-700 dark:text-emerald-400', info: 'text-subtle', warn: 'text-amber-700 dark:text-amber-400',
+  busy: 'text-sky-700 dark:text-sky-400', bad: 'text-red-600 dark:text-red-400',
+};
+
+/** Worker version state + one-click update (or the command to run on that machine). */
+export function UpdateLine({ m }: { m: Machine }) {
+  const [copied, setCopied] = useState(false);
+  const v = machineUpdateView(m, window.location.origin);
+  if (!v) return null;
+  return (
+    <div className="mt-1 space-y-1 text-[12px]" data-update={m.workerId}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`${TONE[v.tone]} ${v.tone === 'busy' ? 'animate-pulse' : ''}`}>{v.label}</span>
+        {v.canUpdate && (
+          <button className="btn-primary px-2 py-0.5 text-[11px]" title="下载新版本，等这台机器上的会话都空闲后自动重启"
+            onClick={() => engine.updateMachine(m.workerId).catch(reportError)}>更新</button>
+        )}
+      </div>
+      {v.hint && <div className="muted text-[11px]">{v.hint}</div>}
+      {v.command && (
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded bg-hover px-2 py-1 font-mono text-[11px]">{v.command}</code>
+          <button className="btn-ghost px-2 py-0.5 text-[11px]" onClick={() => { void navigator.clipboard?.writeText(v.command!); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
+            {copied ? '已复制' : '复制'}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -90,7 +123,8 @@ export function MachinesPage() {
                           if (e.key === 'Enter') { engine.renameMachine(m.workerId, edit.trim()).catch(reportError); setEditing({}); }
                         }} />
                     ) : <div className="font-medium">{m.label || m.workerId}</div>}
-                    <div className="muted font-mono text-[11px]">{m.workerId} · v{m.version || '?'} · {online ? '在线' : m.lastSeenAt ? `离线（${relativeTime(m.lastSeenAt)}）` : '离线'}</div>
+                    <div className="muted font-mono text-[11px]">{m.workerId} · v{m.version || '?'}{m.update?.build ? `（${m.update.build}）` : ''} · {online ? '在线' : m.lastSeenAt ? `离线（${relativeTime(m.lastSeenAt)}）` : '离线'}</div>
+                    <UpdateLine m={m} />
                   </div>
                   <Link to="/memory/$workerId" params={{ workerId: m.workerId }} className="btn-ghost text-xs" title="编辑这台机器的 AGENTS.md 记忆">机器记忆</Link>
                   <button className="btn-ghost text-xs" onClick={() => setEditing({ [m.workerId]: m.label })}>重命名</button>

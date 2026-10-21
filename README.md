@@ -130,6 +130,14 @@ curl -fsSL 'https://nopear.example.com/install.sh?code=…' | bash
 
 It installs Node and pi if needed, sets the worker up as a background service (launchd on macOS, systemd on Linux / WSL2) and claims the machine to your account. Then log in to your model provider on that machine with `pi`, and you're done.
 
+**Updating.** When a worker is behind, **Machines** says so: click **Update** and it downloads the new version, waits until none of its sessions is working, and restarts. Workers installed before this existed need one manual update on that machine (it keeps the config, identity and sessions):
+
+```bash
+curl -fsSL https://nopear.example.com/update.sh | bash
+```
+
+Set `NOPEAR_AUTO_UPDATE=0` in a worker's `.env` to refuse updates from the console.
+
 ### 3. Get the phone app
 
 The mobile app lives in `mobile/` (Expo). Build it with your own Apple / Google developer account:

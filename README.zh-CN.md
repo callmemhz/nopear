@@ -130,6 +130,14 @@ curl -fsSL 'https://nopear.example.com/install.sh?code=…' | bash
 
 脚本会按需安装 Node 和 pi，把 worker 注册成后台服务（macOS 用 launchd，Linux / WSL2 用 systemd），并自动认领到你的账号。最后在那台机器上用 `pi` 登录模型，就可以用了。
 
+**更新**：worker 落后时，「机器」页会标出「有新版本」，点「更新」即可。它会下载新版、等这台机器上的会话都空闲，再自动重启。这个功能之前装的 worker 需要在那台机器上手动更新一次（配置、身份和会话都会保留）：
+
+```bash
+curl -fsSL https://nopear.example.com/update.sh | bash
+```
+
+不想让控制台远程更新某台机器，就在它的 `.env` 里写 `NOPEAR_AUTO_UPDATE=0`。
+
 ### 3. 装手机 app
 
 手机 app 在 `mobile/`（Expo），用你自己的 Apple / Google 开发者账号构建：

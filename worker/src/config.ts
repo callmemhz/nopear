@@ -19,6 +19,8 @@ export interface WorkerConfig {
   dnsOrder: 'ipv4first' | 'verbatim';
   /** NOPEAR_AUTO_TITLE (default on): after the first reply, ask the session's model for a short title. */
   autoTitle: boolean;
+  /** NOPEAR_AUTO_UPDATE (default on): a one-line install may update itself when asked from the console. */
+  autoUpdate: boolean;
 }
 const expand = (p: string): string => resolve(p.startsWith('~') ? join(homedir(), p.slice(1)) : p);
 const num = (v: string | undefined, d: number): number => {
@@ -68,12 +70,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     persona: env.NOPEAR_PERSONA || 'Claude Code',
     askTimeoutMs: num(env.NOPEAR_ASK_TIMEOUT_MS, 0),
     idleDisposeMs: num(env.NOPEAR_IDLE_DISPOSE_MS, 600_000),
-    version: '3.1.0',
+    version: '3.2.0',
     e2e,
     cardWip,
     installCode: env.NOPEAR_INSTALL_CODE?.trim() || null,
     envFile: resolve(process.cwd(), '.env'),
     dnsOrder,
     autoTitle: !['0', 'false', 'off'].includes((env.NOPEAR_AUTO_TITLE ?? '').trim().toLowerCase()),
+    autoUpdate: !['0', 'false', 'off'].includes((env.NOPEAR_AUTO_UPDATE ?? '').trim().toLowerCase()),
   };
 }

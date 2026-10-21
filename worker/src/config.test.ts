@@ -40,8 +40,8 @@ test("envFile = resolve(cwd, '.env')", () => {
   assert.equal(loadConfig(base).envFile, resolve(process.cwd(), '.env'));
 });
 
-test('worker version is 3.1.0 and matches package.json', async () => {
-  assert.equal(loadConfig(base).version, '3.1.0');
+test('worker version is 3.2.0 and matches package.json', async () => {
+  assert.equal(loadConfig(base).version, '3.2.0');
   const pkg = JSON.parse((await import('node:fs')).readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
-  assert.equal(pkg.version, '3.1.0');
+  assert.equal(pkg.version, '3.2.0');
 });

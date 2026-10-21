@@ -374,3 +374,46 @@ test('SAAS_WORKER_TGZ: existing file is served as-is (not deleted on close); mis
     assert.ok(errors.some((a) => String(a[0]).includes(`SAAS_WORKER_TGZ not found: ${missing}`)));
   });
 });
+
+test('buildWorkerTarball: nopear-build.json carries a content hash, stable across builds, readable from the tgz', async () => {
+  const { readTarballBuild, contentHash, BUILD_FILE } = await import('./install');
+  const a = join(tmp, 'b1.tgz'); const b = join(tmp, 'b2.tgz');
+  const ba = await buildWorkerTarball(repoRoot, a);
+  const bb = await buildWorkerTarball(repoRoot, b);
+  assert.match(ba, /^[0-9a-f]{12}$/);
+  assert.equal(ba, bb, 'same content → same build');
+  assert.equal(await readTarballBuild(a), ba);
+  const dir = extract(a);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, BUILD_FILE), 'utf8')), { build: ba });
+  assert.equal(contentHash(dir), ba, 'the build file itself is not hashed');
+  writeFileSync(join(dir, 'worker', 'extra.txt'), 'x');
+  assert.notEqual(contentHash(dir), ba);
+  assert.equal(await readTarballBuild(join(tmp, 'missing.tgz')), null);
+});
+
+test('GET /update.sh: no code needed, valid bash, SaaS URL + pi version filled in, keeps .env, deferred swap', async () => {
+  const { renderUpdateScript } = await import('./install');
+  const s = renderUpdateScript({ saasUrl: "https://nopear.example.com", piVersion: '0.84.4' });
+  bashSyntaxOk(s);
+  assert.ok(s.includes("SAAS_URL='https://nopear.example.com'"));
+  assert.ok(s.includes("PI_SPEC='@earendil-works/pi-coding-agent@0.84.4'"));
+  assert.ok(!s.includes('__NOPEAR_'));
+  for (const frag of ['/install/worker.tgz', 'cp -p "$DEST/worker/.env" "$NEW/worker/.env"', '--from-worker', 'kill -USR2', 'worker.pid', '--include-workspace-root']) {
+    assert.ok(s.includes(frag), frag);
+  }
+  // a machine without a one-line install gets a clear error, and nothing is touched
+  const home = mkdtempSync(join(tmp, 'home-'));
+  const r = spawnSync('bash', ['-s'], { input: s, encoding: 'utf8', env: { ...process.env, HOME: home } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /没有找到一键安装的 worker/);
+  const store = await openStore('sqlite::memory:');
+  const app = Fastify();
+  registerInstall(app, { store, repoRoot, publicUrl: 'https://pub.example.com', workerTgz: join(tmp, 'b1.tgz') });
+  await app.ready();
+  const res = await app.inject({ method: 'GET', url: '/update.sh' });
+  assert.equal(res.statusCode, 200);
+  assert.match(res.headers['content-type'] as string, /shellscript/);
+  assert.ok(res.body.includes("SAAS_URL='https://pub.example.com'"));
+  await app.close();
+  await store.close();
+});

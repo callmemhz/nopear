@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fromB64url, randomId, sha256Hex } from '@nopear/core/crypto';
 import {
   BINARY_RPC_TIMEOUT_MS, HEADER_CLIENT, HEADER_PLAIN, INSTALL_CODE_TTL_MS, PLAINTEXT_DISABLED_MESSAGE, SAAS_TOKEN_TTL_MS, SSE_PING_MS,
-  type AllowlistEntry, type AllowlistRole, type CardPatch, type CardState, type InstallCodeResult, type Machine, type MeResult,
+  type AllowlistEntry, type AllowlistRole, type CardPatch, type CardState, type InstallCodeResult, type Machine, type MachineUpdate, type MeResult,
   type MemoryScope, type SaasEvent, type User,
   type AdminMachine, type AdminOverview, type AdminUser,
 } from '@nopear/protocol';
@@ -55,8 +55,11 @@ export class EventsBus {
   }
 }
 
-export function toMachine(w: WorkerRow, online: boolean): Machine {
-  return { workerId: w.workerId, label: w.label, workerPub: w.workerPub, online, lastSeenAt: w.lastSeenAt, version: w.version };
+export function toMachine(w: WorkerRow, hub: { isOnline(id: string): boolean; machineUpdate(id: string): MachineUpdate | undefined }): Machine {
+  const m: Machine = { workerId: w.workerId, label: w.label, workerPub: w.workerPub, online: hub.isOnline(w.workerId), lastSeenAt: w.lastSeenAt, version: w.version };
+  const update = hub.machineUpdate(w.workerId);
+  if (update) m.update = update;
+  return m;
 }
 const toUser = (u: UserRow): User => ({ id: u.id, email: u.email });
 const toEntry = (r: AllowlistRow): AllowlistEntry => ({ email: r.email, role: r.role, addedBy: r.addedBy, createdAt: r.createdAt });
@@ -237,7 +240,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
   app.get('/api/machines', async (req, reply) => {
     const u = await authUser(req);
     if (!u) return fail(reply, 401, 'unauthorized', 'login required');
-    const machines = (await store.workers.listByUser(u.id)).map((w) => toMachine(w, hub.isOnline(w.workerId)));
+    const machines = (await store.workers.listByUser(u.id)).map((w) => toMachine(w, hub));
     return { machines };
   });
   app.post('/api/machines/claim', async (req, reply) => {
@@ -249,7 +252,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     const w = await store.workers.claim(b.workerId, sha256Hex(b.claimToken), u.id, label, Date.now());
     if (!w) return fail(reply, 400, 'bad_request', 'invalid, expired or already-used claim token');
     await hub.pushAuthz(w.workerId);
-    const machine = toMachine(w, hub.isOnline(w.workerId));
+    const machine = toMachine(w, hub);
     events.emit(u.id, { type: 'machine.updated', machine });
     return { machine };
   });
@@ -267,9 +270,19 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     const label = (req.body as { label?: unknown } | null)?.label;
     if (typeof label !== 'string' || !label.trim()) return fail(reply, 400, 'bad_request', 'label required');
     await store.workers.update(o.w.workerId, { label: label.trim().slice(0, 200) });
-    const machine = toMachine((await store.workers.get(o.w.workerId))!, hub.isOnline(o.w.workerId));
+    const machine = toMachine((await store.workers.get(o.w.workerId))!, hub);
     events.emit(o.u.id, { type: 'machine.updated', machine });
     return { machine };
+  });
+  app.post('/api/machines/:workerId/update', async (req, reply) => {
+    const o = await ownedWorker(req, reply);
+    if (!o) return reply;
+    const u = hub.machineUpdate(o.w.workerId);
+    if (!u) return fail(reply, 409, 'conflict', 'machine is offline');
+    if (!u.self) return fail(reply, 409, 'conflict', 'this worker cannot update itself (not a one-line install running as a service, or NOPEAR_AUTO_UPDATE=0); run the update command on that machine');
+    if (u.state === 'downloading' || u.state === 'waiting' || u.state === 'restarting') return { machine: toMachine(o.w, hub) };
+    if (!hub.requestUpdate(o.w.workerId)) return fail(reply, 409, 'conflict', 'machine is offline');
+    return { machine: toMachine(o.w, hub) };
   });
   app.delete('/api/machines/:workerId', async (req, reply) => {
     const o = await ownedWorker(req, reply);
@@ -579,7 +592,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     untrack = events.track(() => { if (!closed) { stop(); raw.end(); } }, u.id);
     raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
     const send = (e: SaasEvent) => push(`data: ${JSON.stringify(e)}\n\n`);
-    const machines = (await store.workers.listByUser(u.id)).map((w) => toMachine(w, hub.isOnline(w.workerId)));
+    const machines = (await store.workers.listByUser(u.id)).map((w) => toMachine(w, hub));
     if (closed || raw.destroyed) { stop(); return; }
     send({ type: 'machines', machines });
     unsub = events.subscribe(u.id, send);
@@ -688,7 +701,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     if (r.status === 'exists') return fail(reply, 409, 'conflict', 'workerId already registered with a different identity');
     if (r.status === 'owned_elsewhere') return fail(reply, 409, 'conflict', 'machine belongs to another account');
     await hub.pushAuthz(workerId);
-    events.emit(r.code.userId, { type: 'machine.updated', machine: toMachine(r.worker, hub.isOnline(workerId)) });
+    events.emit(r.code.userId, { type: 'machine.updated', machine: toMachine(r.worker, hub) });
     return { platformPub: d.signingPub };
   });
 }

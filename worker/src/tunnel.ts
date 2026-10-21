@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import WebSocket from 'ws';
 import {
   CLAIM_TOKEN_TTL_MS, HEADER_WORKER, RPC_TIMEOUT_MS, TUNNEL_DEAD_MS, TUNNEL_MAX_FRAME_BYTES, TUNNEL_PING_MS,
-  type Card, type SaasErrorBody, type SaasToWorker, type SessionIndexEntry, type ToolName, type ToolOutcome, type WorkerRegisterRequest,
+  type Card, type SaasErrorBody, type SaasToWorker, type WorkerUpdateState, type SessionIndexEntry, type ToolName, type ToolOutcome, type WorkerRegisterRequest,
   type WorkerRegisterResponse, type WorkerToSaas,
 } from '@nopear/protocol';
 import { randomId, sha256Hex } from '@nopear/core/crypto';
@@ -72,6 +72,11 @@ export interface TunnelOptions {
   toolTimeoutMs?: number;
   /** Every `authz` frame (claimed or not), after the gateway applied it — used to push account settings (auto-compact). */
   onAuthz?(frame: Extract<SaasToWorker, { t: 'authz' }>): void;
+  /** Reported in hello (see MachineUpdate). */
+  build?: string;
+  selfUpdate?: boolean;
+  /** SaaS asked this worker to update itself. */
+  onUpdate?(): void;
 }
 
 /** SaaS error body `{error:{message}}` (SaasErrorBody) → message; anything else → undefined. */
@@ -253,6 +258,11 @@ export class TunnelClient implements CollabLink {
     if (changed) saveIdentity(config.home, identity);
   }
 
+  /** Report self-update progress to SaaS (dropped while offline; the updater re-reports after reconnect). */
+  reportUpdate(state: WorkerUpdateState, message?: string): void {
+    this.send(message ? { t: 'update.state', state, message } : { t: 'update.state', state });
+  }
+
   private send(f: WorkerToSaas): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(f));
   }
@@ -323,7 +333,9 @@ export class TunnelClient implements CollabLink {
   private sendHello(withClaim: boolean): void {
     const { config, identity } = this.opts;
     if (this.claimTimer) { clearTimeout(this.claimTimer); this.claimTimer = null; }
-    const hello: WorkerToSaas = { t: 'hello', version: config.version, label: config.label };
+    const hello: Extract<WorkerToSaas, { t: 'hello' }> = { t: 'hello', version: config.version, label: config.label };
+    if (this.opts.build) hello.build = this.opts.build;
+    if (this.opts.selfUpdate) hello.selfUpdate = true;
     if (withClaim && !this.claimed) {
       const token = randomId(24);
       hello.claimTokenHash = sha256Hex(token);
@@ -379,6 +391,10 @@ export class TunnelClient implements CollabLink {
         return;
       case 'projects.changed':
         for (const fn of [...this.projectsListeners]) safe(() => fn());
+        return;
+      case 'update':
+        if (this.opts.onUpdate) safe(() => this.opts.onUpdate!());
+        else this.send({ t: 'update.state', state: 'failed', message: 'this worker cannot update itself' });
         return;
     }
   }

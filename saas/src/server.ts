@@ -38,7 +38,7 @@ export async function buildServer(opts: { config: SaasConfigEnv; store: SaasStor
     onPresence: (workerId) => {
       void (async () => {
         const w = await store.workers.get(workerId);
-        if (w?.userId) events.emit(w.userId, { type: 'machine.updated', machine: toMachine(w, hub.isOnline(workerId)) });
+        if (w?.userId) events.emit(w.userId, { type: 'machine.updated', machine: toMachine(w, hub) });
       })();
     },
   });
@@ -71,6 +71,7 @@ export async function buildServer(opts: { config: SaasConfigEnv; store: SaasStor
     repoRoot: resolve(import.meta.dirname, '../..'),
     publicUrl: config.publicUrlExplicit ? config.publicUrl : null,
     workerTgz: config.workerTgz,
+    onBuild: (b) => hub.setLatestBuild(b),
   });
   registerStatic(app, config.webDir);
 

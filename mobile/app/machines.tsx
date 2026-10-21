@@ -1,6 +1,7 @@
 // Machines: list + online state, rename, unclaim, memory; claim via QR scan or pasted link.
 import { useState } from 'react';
-import { ActionSheetIOS, Alert, Platform, ScrollView, Text, View } from 'react-native';
+import { ActionSheetIOS, Alert, Platform, ScrollView, Share, Text, View } from 'react-native';
+import { machineUpdateView } from '@nopear/core';
 import { router } from 'expo-router';
 import type { Machine } from '@nopear/protocol';
 import { claimFromLink } from '../src/claim';
@@ -20,14 +21,21 @@ function unclaim(m: Machine) {
     { text: '解绑', style: 'destructive', onPress: () => void engine.removeMachine(m.workerId).catch((e) => Alert.alert('失败', errorText(e))) },
   ]);
 }
+function saasUrl(): string { return engine.store.getState().saasUrl; }
+function update(m: Machine) {
+  engine.updateMachine(m.workerId).catch((e) => Alert.alert('更新失败', errorText(e)));
+}
 function menu(m: Machine) {
+  const v = machineUpdateView(m, saasUrl());
   const opts = [
+    ...(v?.canUpdate ? [{ label: '更新 worker（会话空闲后自动重启）', run: () => update(m) }] : []),
+    ...(v?.command ? [{ label: '分享更新命令（在那台机器上运行）', run: () => void Share.share({ message: v.command! }) }] : []),
     { label: '编辑记忆（AGENTS.md）', run: () => router.push(`/memory/${encodeURIComponent(m.workerId)}` as never) },
     { label: '重命名', run: () => rename(m) },
     { label: '解绑', run: () => unclaim(m), destructive: true },
   ];
   if (Platform.OS === 'ios') {
-    ActionSheetIOS.showActionSheetWithOptions({ title: m.label, options: [...opts.map((o) => o.label), '取消'], cancelButtonIndex: opts.length, destructiveButtonIndex: 2 }, (i) => opts[i]?.run());
+    ActionSheetIOS.showActionSheetWithOptions({ title: m.label, options: [...opts.map((o) => o.label), '取消'], cancelButtonIndex: opts.length, destructiveButtonIndex: opts.length - 1 }, (i) => opts[i]?.run());
   } else {
     Alert.alert(m.label, undefined, [...opts.map((o) => ({ text: o.label, onPress: o.run })), { text: '取消', style: 'cancel' as const }]);
   }
@@ -46,16 +54,17 @@ export default function Machines() {
     <View style={{ flex: 1, backgroundColor: c.grouped }}>
       <TopBar title="机器" />
       <ScrollView style={{ backgroundColor: c.grouped }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <Section title="我的机器" footer="点按机器查看操作：编辑记忆、重命名、解绑">
+        <Section title="我的机器" footer="点按机器查看操作：更新、编辑记忆、重命名、解绑">
           {list.length === 0 ? <Empty title="还没有机器" hint="在 worker 终端里会打印认领链接与二维码" /> : null}
           {list.map((m, i) => {
             const st = conn[m.workerId] ?? (m.online ? 'connecting' : 'offline');
             const w = info[m.workerId];
+            const v = machineUpdateView(m, saasUrl());
             return (
               <Row key={m.workerId} last={i === list.length - 1} chevron
                 left={<Dot color={statusColor(c, st)} size={10} />}
                 title={m.label}
-                subtitle={`${st === 'online' ? '在线' : st === 'connecting' ? '连接中' : `离线 · ${relativeTime(m.lastSeenAt)}`} · v${m.version || '?'}${w ? ` · ${w.defaultModel}` : ''}`}
+                subtitle={`${st === 'online' ? '在线' : st === 'connecting' ? '连接中' : `离线 · ${relativeTime(m.lastSeenAt)}`} · v${m.version || '?'}${v ? ` · ${v.label}` : ''}${w ? ` · ${w.defaultModel}` : ''}`}
                 onPress={() => menu(m)} />
             );
           })}

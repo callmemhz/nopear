@@ -534,7 +534,25 @@ export type ResponseHeader =
 // ---------- SaaS control plane ----------
 export interface User { id: string; email: string }
 export interface Client { clientPub: string; label: string; createdAt: string }
-export interface Machine { workerId: string; label: string; workerPub: string; online: boolean; lastSeenAt: string | null; version: string }
+export interface Machine {
+  workerId: string; label: string; workerPub: string; online: boolean; lastSeenAt: string | null; version: string;
+  /** Present while online. */
+  update?: MachineUpdate;
+}
+/**
+ * Worker updates. `build` = content hash of the installer package the worker runs (absent: a source checkout,
+ * which updates with git, not from here); `latest` = the package SaaS serves now. `self`: a one-line install
+ * running as a launchd/systemd service (NOPEAR_AUTO_UPDATE≠0) can update itself on `POST /api/machines/:id/update`:
+ * it downloads the new package, waits until no session is working, then restarts.
+ */
+export type WorkerUpdateState = 'downloading' | 'waiting' | 'restarting' | 'failed';
+export interface MachineUpdate {
+  build?: string; latest?: string; self: boolean;
+  /** An update in progress (or the last one that failed); `message` e.g. how many sessions it waits for. */
+  state?: WorkerUpdateState; message?: string;
+}
+/** `GET /update.sh`: update a one-line install in place (no install code; keeps worker/.env and all data). */
+export const UPDATE_EXIT_CODE = 75;
 export interface SaasConfig { googleEnabled: boolean; devLogin: boolean; publicUrl: string }
 /** Login allowlist (stored on SaaS; empty = disabled / open mode). Unrelated to the OAuth redirect allowlist. */
 export type AllowlistRole = 'admin' | 'member';
@@ -584,7 +602,8 @@ export interface SaasErrorBody { error: { code: string; message: string } }
 // ---------- worker <-> SaaS tunnel frames (JSON text frames) ----------
 // payload = b64url ciphertext, or b64url plaintext frame when `plain: true` (E2E off).
 export type WorkerToSaas =
-  | { t: 'hello'; version: string; label: string; claimTokenHash?: string }
+  | { t: 'hello'; version: string; label: string; claimTokenHash?: string; build?: string; selfUpdate?: boolean }
+  | { t: 'update.state'; state: WorkerUpdateState; message?: string }
   | { t: 'rpc.res'; id: string; payload: string; plain?: true }
   | { t: 'rpc.err'; id: string; status: 400 | 401; code: 'bad_request' | 'unauthorized'; message: string }
   | { t: 'watch.data'; id: string; payload: string; plain?: true }
@@ -602,6 +621,8 @@ export type SaasToWorker =
   | { t: 'tool.res'; id: string; result?: unknown; error?: { code: ToolErrorCode; message: string } }
   | { t: 'cards'; cards: Card[] }
   | { t: 'projects.changed' }
+  /** Update yourself (see MachineUpdate). */
+  | { t: 'update' }
   | { t: 'ping' }
   | { t: 'pong' };
 export interface WorkerRegisterRequest { workerId: string; workerPub: string; secretHash: string; installCode?: string }

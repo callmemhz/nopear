@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import WebSocket from 'ws';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { generateClientKey, generateSigningKey, randomId, sha256Hex, signingPublicKey, verifyAuthz } from '@nopear/core/crypto';
-import { PLAINTEXT_DISABLED_MESSAGE, type SaasToWorker } from '@nopear/protocol';
+import { PLAINTEXT_DISABLED_MESSAGE, type Machine, type SaasToWorker } from '@nopear/protocol';
 import { openStore } from './store';
 import { buildServer, hubOf } from './server';
 import { WorkerHub } from './hub';
@@ -1141,4 +1141,47 @@ test('collab REST: repeated query keys and non-string ids are 400, not 500', asy
   const cleared = await json(`/api/cards/${card.id}`, { method: 'PATCH', token, body: JSON.stringify({ projectId: null }) });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.body.card.projectId, null);
+});
+
+test('worker self-update: build + latest on the machine, POST update sends the frame, progress relayed, guards', async () => {
+  const workerId = 'w_' + 'upd'.repeat(5) + 'x';
+  const { u, w } = await claimedWorker('upd@x.com', workerId, '3.2.0');
+  const hub = hubOf(app);
+  // the server builds worker.tgz in the background: let that finish first so it cannot overwrite latestBuild mid-test
+  for (let i = 0; i < 600 && !hub.latestBuild; i++) await new Promise((r) => setTimeout(r, 50));
+  const prevLatest = hub.latestBuild;
+  hub.setLatestBuild('newbuild0001');
+  const machine = async () => ((await json('/api/machines', { token: u.token })).body as { machines: Machine[] }).machines.find((m) => m.workerId === workerId)!;
+  try {
+    // no self-update capability yet (hello had no build) → 409
+    assert.deepEqual((await machine()).update, { self: false, latest: 'newbuild0001' });
+    assert.equal((await json(`/api/machines/${workerId}/update`, { method: 'POST', token: u.token, body: '{}' })).status, 409);
+    w.ws.send(JSON.stringify({ t: 'hello', version: '3.2.0', label: 'd', build: 'oldbuild0001', selfUpdate: true }));
+    for (let i = 0; i < 50 && (await machine()).update?.build !== 'oldbuild0001'; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual((await machine()).update, { self: true, build: 'oldbuild0001', latest: 'newbuild0001' });
+    // another account cannot trigger it
+    const other = await login('other-upd@x.com');
+    assert.equal((await json(`/api/machines/${workerId}/update`, { method: 'POST', token: other.token, body: '{}' })).status, 403);
+    const frameP = w.next((f) => f.t === 'update');
+    const r = await json(`/api/machines/${workerId}/update`, { method: 'POST', token: u.token, body: '{}' });
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { machine: Machine }).machine.update?.state, 'downloading');
+    await frameP;
+    // a second click while it runs: no second frame
+    assert.equal((await json(`/api/machines/${workerId}/update`, { method: 'POST', token: u.token, body: '{}' })).status, 200);
+    await new Promise((res) => setTimeout(res, 50));
+    assert.ok(!w.frames.some((f) => f.t === 'update'));
+    w.ws.send(JSON.stringify({ t: 'update.state', state: 'waiting', message: '等 2 个会话空闲后重启' }));
+    for (let i = 0; i < 50 && (await machine()).update?.state !== 'waiting'; i++) await new Promise((r2) => setTimeout(r2, 20));
+    assert.equal((await machine()).update?.message, '等 2 个会话空闲后重启');
+    w.ws.send(JSON.stringify({ t: 'update.state', state: 'bogus' }));
+    await new Promise((res) => setTimeout(res, 50));
+    assert.equal((await machine()).update?.state, 'waiting');
+  } finally {
+    if (prevLatest) hub.setLatestBuild(prevLatest); else hub.latestBuild = null;
+    w.ws.close();
+  }
+  for (let i = 0; i < 50 && (await machine()).online; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await machine()).update, undefined); // offline: nothing known
+  assert.equal((await json(`/api/machines/${workerId}/update`, { method: 'POST', token: u.token, body: '{}' })).status, 409);
 });

@@ -130,6 +130,14 @@ curl -fsSL 'https://nopear.example.com/install.sh?code=…' | bash
 
 必要に応じて Node と pi をインストールし、worker をバックグラウンドサービスとして登録し（macOS は launchd、Linux / WSL2 は systemd）、マシンをあなたのアカウントに登録します。あとはそのマシンで `pi` からモデルにログインすれば完了です。
 
+**アップデート**：worker が古くなると「マシン」画面に表示されます。「更新」を押すと新しいバージョンをダウンロードし、そのマシンのセッションがすべて止まるのを待ってから再起動します。この機能より前にインストールした worker は、そのマシンで一度だけ手動で更新してください（設定・ID・セッションは保持されます）。
+
+```bash
+curl -fsSL https://nopear.example.com/update.sh | bash
+```
+
+コンソールからの更新を拒否するには、その worker の `.env` に `NOPEAR_AUTO_UPDATE=0` を書きます。
+
 ### 3. スマホアプリ
 
 モバイルアプリは `mobile/`（Expo）にあります。ご自身の Apple / Google 開発者アカウントでビルドしてください。

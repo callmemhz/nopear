@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
-import { cpSync, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
+
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { FastifyInstance } from 'fastify';
 import { sha256Hex } from '@nopear/core/crypto';
@@ -181,7 +183,7 @@ ${labelEnv}  } > "$DEST/worker/.env"
     <string>"$NPM" start -w @nopear/worker; c=\\$?; [ \\$c -eq 78 ] &amp;&amp; exit 0; exit \\$c</string>
   </array>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>$NODE_BIN:$NPM_GLOBAL_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <dict><key>PATH</key><string>$NODE_BIN:$NPM_GLOBAL_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string><key>NOPEAR_SERVICE</key><string>launchd</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>
@@ -208,6 +210,7 @@ Description=nopear worker
 Type=simple
 WorkingDirectory=%h/.nopear-worker
 Environment="PATH=$NODE_BIN:$NPM_GLOBAL_BIN:/usr/local/bin:/usr/bin:/bin"
+Environment=NOPEAR_SERVICE=systemd
 ExecStart="$NPM" start -w @nopear/worker
 Restart=always
 RestartSec=5
@@ -240,6 +243,12 @@ UNIT
 
 main "$@"
 `;
+}
+
+/** `/update.sh`: saas/src/update.sh with the SaaS URL and pi CLI version filled in. */
+export function renderUpdateScript(o: { saasUrl: string; piVersion: string }): string {
+  const tpl = readFileSync(join(import.meta.dirname, 'update.sh'), 'utf8');
+  return tpl.replace('__NOPEAR_SAAS_URL__', shq(o.saasUrl)).replace('__NOPEAR_PI_SPEC__', shq(`${PI_PACKAGE}@${o.piVersion}`));
 }
 
 /** worker/package.json 中 pi SDK 依赖的版本（写进安装脚本）。 */
@@ -277,7 +286,7 @@ function tarFlags(): Promise<string[]> {
  * 打包 worker 需要的仓库子集并改写根 workspaces。优先只取 git 跟踪的文件（allowlist）；
  * git 不可用时退回目录复制。两种方式都再过一遍 deny 过滤（.env*、密钥、日志、node_modules 等）。
  */
-export async function buildWorkerTarball(repoRoot: string, outFile: string): Promise<void> {
+export async function buildWorkerTarball(repoRoot: string, outFile: string): Promise<string> {
   const stage = mkdtempSync(join(tmpdir(), 'nopear-worker-stage-'));
   try {
     const rootPkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as Record<string, unknown>;
@@ -297,14 +306,50 @@ export async function buildWorkerTarball(repoRoot: string, outFile: string): Pro
         cpSync(join(repoRoot, p), join(stage, p), { recursive: true, filter: (src) => !isDeniedName(basename(src)) });
       }
     }
+    // 构建号 = 包内容的哈希：内容不变构建号就不变（worker 据此上报自己跑的版本，SaaS 据此判断有没有新版本）
+    const build = contentHash(stage);
+    writeFileSync(join(stage, BUILD_FILE), `${JSON.stringify({ build })}\n`);
     // 不带扩展属性 / mac 元数据：否则 macOS bsdtar 会写入 LIBARCHIVE.xattr.com.apple.provenance 等 PAX 头，
     // GNU tar 解压时逐条告警（COPYFILE_DISABLE 只挡 AppleDouble ._ 文件，挡不住 provenance xattr）。
     // 参数按实际 tar 实现选（不按平台）：macOS 上 PATH 里可能是 GNU tar，Linux 上可能是 busybox tar
     const flags = await tarFlags();
     await run('tar', [...flags, '-czf', outFile, '-C', stage, '.'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
+    return build;
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }
+}
+
+export const BUILD_FILE = 'nopear-build.json';
+
+/** sha256 of the staged tree (sorted relative paths + contents), first 12 hex chars. */
+export function contentHash(dir: string): string {
+  const files: string[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p); else if (e.isFile()) files.push(p);
+    }
+  };
+  walk(dir);
+  const h = createHash('sha256');
+  for (const f of files.map((p) => relative(dir, p).split(sep).join('/')).sort()) {
+    if (f === BUILD_FILE) continue;
+    h.update(f).update('\0').update(readFileSync(join(dir, f))).update('\0');
+  }
+  return h.digest('hex').slice(0, 12);
+}
+
+/** Build of a prebuilt worker.tgz (its nopear-build.json); null for an older package without one. */
+export async function readTarballBuild(tgz: string): Promise<string | null> {
+  for (const name of [`./${BUILD_FILE}`, BUILD_FILE]) {
+    try {
+      const { stdout } = await run('tar', ['-xzOf', tgz, name]);
+      const b = (JSON.parse(stdout) as { build?: unknown }).build;
+      if (typeof b === 'string' && b) return b;
+    } catch { /* try the next spelling */ }
+  }
+  return null;
 }
 
 function firstHeader(v: string | string[] | undefined): string | undefined {
@@ -322,7 +367,7 @@ export function requestBaseUrl(protocol: string, headers: IncomingHttpHeaders): 
 
 export function registerInstall(
   app: FastifyInstance,
-  deps: { store: SaasStore; repoRoot: string; publicUrl: string | null; workerTgz: string | null },
+  deps: { store: SaasStore; repoRoot: string; publicUrl: string | null; workerTgz: string | null; onBuild?: (build: string) => void },
 ): void {
   const piVersion = readPiVersion(deps.repoRoot);
   let tarball: string;
@@ -333,11 +378,12 @@ export function registerInstall(
     const ok = existsSync(tarball);
     if (!ok) console.error(`[nopear] SAAS_WORKER_TGZ not found: ${tarball}`);
     built = Promise.resolve(ok);
+    if (ok) void readTarballBuild(tarball).then((b) => { if (b) deps.onBuild?.(b); });
   } else {
     const outDir = mkdtempSync(join(tmpdir(), 'nopear-saas-install-'));
     tarball = join(outDir, 'worker.tgz');
     built = buildWorkerTarball(deps.repoRoot, tarball).then(
-      () => true,
+      (b) => { deps.onBuild?.(b); return true; },
       (e: unknown) => {
         console.error('[nopear] failed to build worker.tgz', e);
         return false;
@@ -358,6 +404,12 @@ export function registerInstall(
     }
     const saasUrl = (deps.publicUrl ?? requestBaseUrl(req.protocol, req.headers)).replace(/\/+$/, '');
     return renderInstallScript({ saasUrl, code: code as string, piVersion, label: row.label });
+  });
+
+  app.get('/update.sh', async (req, reply) => {
+    reply.type('text/x-shellscript; charset=utf-8');
+    const saasUrl = (deps.publicUrl ?? requestBaseUrl(req.protocol, req.headers)).replace(/\/+$/, '');
+    return renderUpdateScript({ saasUrl, piVersion });
   });
 
   app.get('/install/worker.tgz', async (_req, reply) => {

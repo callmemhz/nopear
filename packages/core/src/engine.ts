@@ -72,6 +72,8 @@ export interface NoPearEngine {
   rpc<O extends RpcOp>(workerId: string, op: O, args: RpcArgs<O>): Promise<RpcResult<O>>;
   claim(workerId: string, claimToken: string, label?: string): Promise<void>;
   renameMachine(workerId: string, label: string): Promise<void>;
+  /** Ask a worker to update itself (see MachineUpdate); progress arrives as machine.updated. */
+  updateMachine(workerId: string): Promise<void>;
   removeMachine(workerId: string): Promise<void>;
   setDraft(workerId: string, sessionId: string, text: string): void;
   createProject(input: { name: string; description?: string; paths?: Record<string, string> }): Promise<Project>;
@@ -1077,6 +1079,10 @@ export function createNoPearEngine(opts: {
     rpc,
     async claim(workerId, claimToken, label) {
       const { machine } = await saas.claim(workerId, claimToken, label);
+      applyMachine(machine);
+    },
+    async updateMachine(workerId) {
+      const { machine } = await saas.updateMachine(workerId);
       applyMachine(machine);
     },
     async renameMachine(workerId, label) {

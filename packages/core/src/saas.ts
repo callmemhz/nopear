@@ -74,6 +74,7 @@ export class SaasClient {
   claim(workerId: string, claimToken: string, label?: string): Promise<{ machine: Machine }> {
     return this.json('POST', '/api/machines/claim', label !== undefined ? { workerId, claimToken, label } : { workerId, claimToken });
   }
+  async updateMachine(workerId: string): Promise<{ machine: Machine }> { return this.json('POST', `/api/machines/${encodeURIComponent(workerId)}/update`, {}); }
   async renameMachine(workerId: string, label: string): Promise<void> { await this.json('PATCH', `/api/machines/${encodeURIComponent(workerId)}`, { label }); }
   async removeMachine(workerId: string): Promise<void> { await this.json('DELETE', `/api/machines/${encodeURIComponent(workerId)}`); }
 

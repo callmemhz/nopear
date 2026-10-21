@@ -16,6 +16,8 @@ import { createOps } from './ops';
 import { Gateway } from './gateway';
 import { PlatformKeyMismatchError, RegisterRejectedError, TunnelClient } from './tunnel';
 import { createCollab } from './collab/index';
+import { UPDATE_EXIT_CODE } from '@nopear/protocol';
+import { canSelfUpdate, readBuild, swapInNewCode, Updater, writePidFile } from './update';
 
 /** EX_CONFIG (sysexits.h): permanent registration failure (rejected register, pinned platform key mismatch).
  *  The systemd unit sets RestartPreventExitStatus=78 so it is not restarted in a loop. */
@@ -40,6 +42,11 @@ async function main(): Promise<void> {
     extraTools: (m) => [...collab.hooks.extraTools(m), createSendFileTool({ cwd: m.cwd, blobs })] });
   await host.init();
 
+  const build = readBuild();
+  const selfUpdate = canSelfUpdate({ build, autoUpdate: config.autoUpdate });
+  // eslint-disable-next-line prefer-const -- assigned after the tunnel exists (the updater reports through it)
+  let updater: Updater | undefined;
+
   const { ops, watches } = createOps({ config, host, blobs });
   const gateway = new Gateway({ identity, ops, watches, e2eMode: config.e2e });
   const tunnel = new TunnelClient({
@@ -51,35 +58,51 @@ async function main(): Promise<void> {
       console.log(url);
       qrcode.generate(url, { small: true }, (qr) => console.log(qr));
     },
-    onState: (s) => console.log(`[nopear] tunnel ${s}`),
+    onState: (s) => { console.log(`[nopear] tunnel ${s}`); if (s === 'online') updater?.reannounce(); },
+    ...(build ? { build } : {}),
+    selfUpdate,
+    ...(selfUpdate ? { onUpdate: () => void updater?.update() } : {}),
     onFatal: (err) => {
       console.error(`[nopear] fatal: ${err.message}`);
       void shutdown('fatal', isPermanent(err) ? EXIT_CONFIG : 1);
     },
   });
   const detach = collab.attach(tunnel, host);
+  updater = new Updater({
+    saasUrl: config.saasUrl,
+    busy: () => host.busyCount(),
+    report: (state, message) => tunnel.reportUpdate(state, message),
+    restart: () => void shutdown('update', UPDATE_EXIT_CODE, () => { if (swapInNewCode()) console.log('[nopear] new code swapped in'); }),
+    log: (m) => console.warn(m),
+  });
+  const removePid = writePidFile(config.home);
 
   let closing = false;
-  const shutdown = async (sig: string, code = 0) => {
+  const shutdown = async (sig: string, code = 0, beforeExit?: () => void) => {
     if (closing) return;
     closing = true;
     console.log(`[nopear] ${sig}: shutting down`);
     const force = setTimeout(() => process.exit(1), 10_000);
     force.unref();
     try {
+      updater?.dispose();
+      removePid();
       detach();
       await tunnel.stop();
       await host.shutdown();
     } catch (err) {
       console.warn(`[nopear] shutdown error: ${(err as Error)?.message ?? err}`);
     }
+    beforeExit?.();
     process.exit(code);
   };
   // Install before tunnel.start(): first-boot register may retry for a long time while SaaS is down.
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  // update.sh (run by hand) put new code in place: restart once idle; the service manager starts the new code.
+  process.on('SIGUSR2', () => { console.log('[nopear] SIGUSR2: restart when idle (new code installed)'); updater?.restartWhenIdle(); });
 
-  console.log(`[nopear] worker ${identity.workerId} (${config.label}) → ${config.saasUrl}`);
+  console.log(`[nopear] worker ${identity.workerId} (${config.label}) → ${config.saasUrl} build=${build ?? 'source'}${selfUpdate ? ' (self-update)' : ''}`);
   console.log(`[nopear] home=${config.home} defaultModel=${config.defaultModel} defaultCwd=${config.defaultCwd}`);
   try {
     await tunnel.start();

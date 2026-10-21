@@ -3,7 +3,7 @@ import { b64url, decodeFrame, encodeFrame, fromB64url, randomId, signAuthz } fro
 import {
   CLAIM_TOKEN_TTL_MS, DEFAULT_AUTO_COMPACT, PLAINTEXT_DISABLED_MESSAGE, RPC_TIMEOUT_MS, SAAS_CLIENT_PUB, TUNNEL_DEAD_MS, TUNNEL_PING_MS,
   type ClientAuthz, type ResponseHeader, type RpcOp, type SaasToWorker, type ToolErrorCode, type ToolOutcome,
-  type WorkerToSaas,
+  type WorkerToSaas, type MachineUpdate, type WorkerUpdateState,
   type AutoCompactSettings,
 } from '@nopear/protocol';
 import type { SaasStore } from './store';
@@ -17,6 +17,8 @@ interface Conn {
   watches: Map<string, WatchSink>;
   /** hello / index / card.state are applied in arrival order (a full index must land before later deltas). */
   chain: Promise<void>;
+  /** From hello / update.state (see MachineUpdate). */
+  build?: string; selfUpdate?: boolean; updateState?: WorkerUpdateState; updateMessage?: string;
 }
 
 /** Collaboration handlers for the worker → SaaS frames the hub does not handle itself (wired to the Collab service). */
@@ -74,6 +76,34 @@ export class WorkerHub {
     return signAuthz(this.signingSeed, userId, clientPub);
   }
 
+  /** Installer build SaaS serves (set once worker.tgz is ready). */
+  latestBuild: string | null = null;
+  setLatestBuild(build: string): void {
+    this.latestBuild = build;
+    for (const id of this.conns.keys()) this.onPresence(id); // clients learn whether their machines are behind
+  }
+
+  /** Update info of an online worker (undefined when offline). */
+  machineUpdate(workerId: string): MachineUpdate | undefined {
+    const c = this.conns.get(workerId);
+    if (!c) return undefined;
+    const u: MachineUpdate = { self: c.selfUpdate === true };
+    if (c.build) u.build = c.build;
+    if (this.latestBuild) u.latest = this.latestBuild;
+    if (c.updateState) u.state = c.updateState;
+    if (c.updateMessage) u.message = c.updateMessage;
+    return u;
+  }
+
+  /** Ask a worker to update itself; false when offline. */
+  requestUpdate(workerId: string): boolean {
+    const c = this.conns.get(workerId);
+    if (!c || !this.send(c, { t: 'update' })) return false;
+    c.updateState = 'downloading'; c.updateMessage = undefined;
+    this.onPresence(workerId);
+    return true;
+  }
+
   isOnline(workerId: string): boolean {
     return this.conns.has(workerId);
   }
@@ -118,6 +148,11 @@ export class WorkerHub {
   }
 
   private async onHello(workerId: string, f: Extract<WorkerToSaas, { t: 'hello' }>): Promise<void> {
+    const conn = this.conns.get(workerId);
+    if (conn) {
+      conn.build = typeof f.build === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(f.build) ? f.build : undefined;
+      conn.selfUpdate = f.selfUpdate === true;
+    }
     await this.store.workers.update(workerId, {
       version: String(f.version ?? ''), lastSeenAt: new Date().toISOString(),
     });
@@ -135,6 +170,14 @@ export class WorkerHub {
     switch (f.t) {
       case 'hello':
         return this.serial(conn, () => this.onHello(workerId, f));
+      case 'update.state': {
+        const states: WorkerUpdateState[] = ['downloading', 'waiting', 'restarting', 'failed'];
+        if (!states.includes(f.state)) return;
+        conn.updateState = f.state;
+        conn.updateMessage = typeof f.message === 'string' ? f.message.slice(0, 600) : undefined;
+        this.onPresence(workerId);
+        return;
+      }
       case 'index':
         return this.serial(conn, async () => { await this.handlers?.onIndex(workerId, f); });
       case 'card.state':

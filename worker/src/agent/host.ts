@@ -811,6 +811,17 @@ export class SessionHost {
     }
   }
 
+  /** Loaded sessions still doing something a restart would cut off: a turn, queued sends, background tasks, /btw, an open question. */
+  busyCount(): number {
+    let n = 0;
+    for (const live of this.live.values()) {
+      if (live.disposed) continue;
+      if (live.running || live.session.isStreaming || live.pendingSends.length > 0 || live.tracker.active().length > 0
+        || live.btw.size > 0 || live.asks.size > 0) n++;
+    }
+    return n;
+  }
+
   async shutdown(): Promise<void> {
     this.closed = true;
     for (const l of [...this.live.values()]) {
