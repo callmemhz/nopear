@@ -16,20 +16,21 @@ export interface Palette {
   hover: string; active: string;
   /** accent (clay) used for primary actions */ tint: string; tintText: string; accentSoft: string;
   danger: string; dangerSoft: string; ok: string; warn: string; warnSoft: string;
+  /** background work (subagents) */ info: string;
   bubble: string; bubbleText: string; code: string; field: string;
 }
 const light: Palette = {
   bg: '#faf9f5', grouped: '#f5f4ee', card: '#ffffff', elevated: '#efede6', text: '#1f1e1d', sub: '#6b6a65', faint: '#9c9a92',
   sep: '#e7e5dc', lineStrong: '#d6d3c8', hover: '#efede6', active: '#e8e6dd',
   tint: '#c6613f', tintText: '#ffffff', accentSoft: 'rgba(198,97,63,0.12)',
-  danger: '#d64541', dangerSoft: 'rgba(214,69,65,0.10)', ok: '#2f9e6a', warn: '#c27a12', warnSoft: 'rgba(194,122,18,0.12)',
+  danger: '#d64541', dangerSoft: 'rgba(214,69,65,0.10)', ok: '#2f9e6a', warn: '#c27a12', warnSoft: 'rgba(194,122,18,0.12)', info: '#3b82c4',
   bubble: '#f0eee6', bubbleText: '#1f1e1d', code: '#f0eee6', field: '#f0eee6',
 };
 const dark: Palette = {
   bg: '#262624', grouped: '#1f1e1d', card: '#30302e', elevated: '#393834', text: '#f3f1ea', sub: '#a8a59b', faint: '#78766f',
   sep: '#3a3936', lineStrong: '#4b4a45', hover: '#31302d', active: '#393834',
   tint: '#d97757', tintText: '#ffffff', accentSoft: 'rgba(217,119,87,0.16)',
-  danger: '#f07167', dangerSoft: 'rgba(240,113,103,0.14)', ok: '#3ccf91', warn: '#f2b84b', warnSoft: 'rgba(242,184,75,0.14)',
+  danger: '#f07167', dangerSoft: 'rgba(240,113,103,0.14)', ok: '#3ccf91', warn: '#f2b84b', warnSoft: 'rgba(242,184,75,0.14)', info: '#6aaee8',
   bubble: '#1a1a18', bubbleText: '#f3f1ea', code: '#1d1d1b', field: '#1d1d1b',
 };
 export function usePalette(): Palette {

@@ -42,3 +42,15 @@ export function taskSeconds(t: { startedAt?: string; endedAt?: string }, now: nu
 export function transcriptTimeline(messages: Message[]): TimelineState {
   return { ...emptyTimeline(), cursor: 'transcript', messages, hasMore: false };
 }
+
+/**
+ * What a session's status light shows. The agent working beats background tasks (the turn ended but subagents it
+ * launched are still running), which beat a failed last turn.
+ */
+export type SessionActivity = 'running' | 'background' | 'error' | 'idle';
+export function sessionActivity(s: { status: 'idle' | 'running' | 'error'; taskCount?: number }): SessionActivity {
+  if (s.status === 'running') return 'running';
+  if ((s.taskCount ?? 0) > 0) return 'background';
+  return s.status === 'error' ? 'error' : 'idle';
+}
+export const SESSION_ACTIVITY_LABEL: Record<SessionActivity, string> = { running: '运行中', background: '后台任务运行中', error: '出错', idle: '空闲' };

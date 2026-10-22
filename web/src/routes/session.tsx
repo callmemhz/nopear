@@ -131,7 +131,7 @@ function SessionView({ workerId, sessionId }: { workerId: string; sessionId: str
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="panel flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
-          {session && <StatusDot status={session.status} />}
+          {session && <StatusDot status={session.status} taskCount={taskCount} />}
           {renaming !== null ? (
             <input className="input h-8 max-w-sm py-0 text-[14px] font-medium" autoFocus aria-label="会话标题" value={renaming} onChange={(e) => setRenaming(e.target.value)}
               onBlur={rename} onKeyDown={(e) => { if (e.key === 'Enter') rename(); if (e.key === 'Escape') setRenaming(null); }} />

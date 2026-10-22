@@ -1,12 +1,12 @@
 // Drawer content (mirrors the web sidebar): app header, nav rows, session search + filter, 「置顶」, sessions grouped by
 // project (collapsible, persisted; ＋ starts a session in that project), 「未分类」 last, and the account footer.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Session } from '@nopear/protocol';
 import {
-  groupSessions, parseCollapsed, pickProjectTarget, serializeCollapsed, toggleCollapsed, UNGROUPED,
+  groupSessions, parseCollapsed, pickProjectTarget, serializeCollapsed, sessionActivity, SESSION_ACTIVITY_LABEL, toggleCollapsed, UNGROUPED,
   type SessionFilter, type SessionGroup,
 } from '@nopear/core';
 import { engine, useEngine } from '../engine';
@@ -55,11 +55,24 @@ function NavRow({ icon, label, onPress, active }: { icon: IconName; label: strin
   );
 }
 
-function StatusDot({ status }: { status: Session['status'] }) {
+/** Breathing status light: agent working (green, quick) > background tasks (blue, slow) > error > idle. */
+function StatusDot({ status, taskCount }: { status: Session['status']; taskCount: number }) {
   const c = usePalette();
-  const style = status === 'running' ? { backgroundColor: c.tint } : status === 'error' ? { backgroundColor: c.danger }
-    : { borderWidth: 1.25, borderColor: c.lineStrong };
-  return <View style={[{ width: 8, height: 8, borderRadius: 4 }, style]} />;
+  const a = sessionActivity({ status, taskCount });
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (a !== 'running' && a !== 'background') { opacity.setValue(1); return; }
+    const half = a === 'running' ? 1000 : 1500;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(opacity, { toValue: 0.35, duration: half, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: half, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [a, opacity]);
+  const style = a === 'running' ? { backgroundColor: c.ok } : a === 'background' ? { backgroundColor: c.info }
+    : a === 'error' ? { backgroundColor: c.danger } : { borderWidth: 1.25, borderColor: c.lineStrong };
+  return <Animated.View accessibilityLabel={SESSION_ACTIVITY_LABEL[a]} style={[{ width: 8, height: 8, borderRadius: 4, opacity }, style]} />;
 }
 
 const SessionRow = memo(function SessionRow({ s, active, machineLabel, now, onOpen }: {
@@ -72,7 +85,7 @@ const SessionRow = memo(function SessionRow({ s, active, machineLabel, now, onOp
       accessibilityRole="button" accessibilityState={{ selected: active }}
       style={({ pressed }) => ({ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, borderRadius: 10,
         backgroundColor: active ? c.active : pressed ? c.hover : 'transparent' })}>
-      <StatusDot status={s.status} />
+      <StatusDot status={s.status} taskCount={s.taskCount} />
       <Text numberOfLines={1} style={{ flex: 1, color: c.text, fontSize: 15, fontWeight: active ? '600' : '400' }}>{sessionTitle(s)}</Text>
       {s.promptCount > 0 ? (
         <View style={{ backgroundColor: c.warnSoft, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 }}>

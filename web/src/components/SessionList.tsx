@@ -3,7 +3,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import type { Session } from '@nopear/protocol';
 import { engine, useEngine } from '../engine';
 import { relativeTime } from '../lib/format';
-import { filterSessions, groupSessions, loadCollapsed, saveCollapsed, sessionPlaceLabel, UNGROUPED, type SessionFilter } from '@nopear/core';
+import { filterSessions, groupSessions, loadCollapsed, saveCollapsed, sessionActivity, SESSION_ACTIVITY_LABEL, sessionPlaceLabel, UNGROUPED, type SessionActivity, type SessionFilter } from '@nopear/core';
 import { reportError } from '../routes/root';
 import { Icon } from './Icons';
 
@@ -12,9 +12,17 @@ export type { SessionFilter } from '@nopear/core';
 export const NO_PROJECT = UNGROUPED;
 const COLLAPSED_KEY = 'nopear.sidebarCollapsed';
 
-export function StatusDot({ status, className = '' }: { status: Session['status']; className?: string }) {
-  const c = status === 'running' ? 'bg-emerald-500 animate-pulse' : status === 'error' ? 'bg-red-500' : 'border border-line-strong';
-  return <span aria-label={status === 'running' ? '运行中' : status === 'error' ? '出错' : '空闲'} className={`inline-block h-2 w-2 shrink-0 rounded-full ${c} ${className}`} />;
+const DOT: Record<SessionActivity, string> = {
+  running: 'bg-emerald-500 animate-pulse',
+  // background subagents: a calmer, slower light than the agent's own turn
+  background: 'bg-sky-500 animate-[pulse_3s_cubic-bezier(0.4,0,0.6,1)_infinite]',
+  error: 'bg-red-500',
+  idle: 'border border-line-strong',
+};
+/** Session status light. Pass `taskCount` so a session whose turn ended while its background tasks run still glows. */
+export function StatusDot({ status, taskCount, className = '' }: { status: Session['status']; taskCount?: number; className?: string }) {
+  const a = sessionActivity({ status, taskCount });
+  return <span aria-label={SESSION_ACTIVITY_LABEL[a]} title={SESSION_ACTIVITY_LABEL[a]} data-activity={a} className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT[a]} ${className}`} />;
 }
 
 /** Flat filtered list split into pinned / rest (home page). */
@@ -59,7 +67,7 @@ function Row({ s, multi, showPlace }: { s: Session; multi: boolean; showPlace: b
       aria-current={active ? 'page' : undefined}
       className={`group/row relative flex h-8 items-center gap-2 rounded-lg px-2 text-[13.5px] transition-colors ${active ? 'bg-active text-ink' : 'text-ink/85 hover:bg-hover'}`}
     >
-      <StatusDot status={s.status} />
+      <StatusDot status={s.status} taskCount={s.taskCount} />
       <span className="min-w-0 flex-1 truncate">{s.title || '未命名会话'}</span>
       {place && (showPlace || place.kind === 'dir') && (
         place.kind === 'project'

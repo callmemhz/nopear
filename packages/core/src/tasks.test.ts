@@ -43,3 +43,14 @@ describe('background tasks', () => {
     expect(items[1]!.results.t1?.text).toBe('a.ts');
   });
 });
+
+describe('sessionActivity', () => {
+  it('agent working > background tasks > error > idle', async () => {
+    const { sessionActivity } = await import('./index');
+    expect(sessionActivity({ status: 'running', taskCount: 2 })).toBe('running');
+    expect(sessionActivity({ status: 'idle', taskCount: 1 })).toBe('background');
+    expect(sessionActivity({ status: 'error', taskCount: 1 })).toBe('background');
+    expect(sessionActivity({ status: 'error', taskCount: 0 })).toBe('error');
+    expect(sessionActivity({ status: 'idle' })).toBe('idle');
+  });
+});

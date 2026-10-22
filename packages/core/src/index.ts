@@ -28,6 +28,7 @@ export {
 } from './toolGroups';
 export {
   TASK_STATE_LABEL, taskTone, splitTasks, activeTaskCount, taskTitle, activityLine, taskSeconds, transcriptTimeline, type TaskTone,
+  sessionActivity, SESSION_ACTIVITY_LABEL, type SessionActivity,
 } from './tasks';
 export { machineUpdateView, updateCommand, type MachineUpdateView, type UpdateTone } from './machineUpdate';
 export { createNoPearEngine, type EngineNotice, type EngineState, type NoPearEngine, type MachineConn } from './engine';

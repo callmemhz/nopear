@@ -32,7 +32,7 @@ export function HomePage() {
             {all.slice(0, 30).map((s) => (
               <Link key={s.workerId + s.id} to="/s/$workerId/$sessionId" params={{ workerId: s.workerId, sessionId: s.id }} className="card block p-3 transition-colors hover:border-zinc-300 dark:hover:border-zinc-700">
                 <div className="flex items-center gap-2 text-sm">
-                  <StatusDot status={s.status} />
+                  <StatusDot status={s.status} taskCount={s.taskCount} />
                   <span className="min-w-0 flex-1 truncate font-medium">{s.title || '未命名会话'}</span>
                   {s.pinned && <span className="muted text-xs">置顶</span>}
                   <span className="muted text-[11px]">{relativeTime(s.lastActivityAt)}</span>
